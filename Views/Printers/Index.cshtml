@@ -1,0 +1,87 @@
+@using System.Globalization
+@model List<YaziciTakip.Controllers.PrinterListRow>
+@{
+    ViewData["Title"] = "Yazıcılar";
+    var tr = new CultureInfo("tr-TR");
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <h1 class="mb-0">Yazıcılar</h1>
+    <a class="btn btn-outline-secondary btn-sm" asp-controller="Report" asp-action="Summary">Rapora dön</a>
+</div>
+
+@if (TempData["Success"] is string ok)
+{
+    <div class="alert alert-success">@ok</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="card mb-4">
+    <div class="card-header">Yeni yazıcı ekle</div>
+    <div class="card-body">
+        <form method="post" asp-controller="Printers" asp-action="Create" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label for="name" class="form-label">Yazıcı adı</label>
+                <input type="text" id="name" name="name" class="form-control" placeholder="ör. Muhasebe" required style="min-width:12rem" />
+            </div>
+            <div class="col-auto">
+                <label for="ipAddress" class="form-label">IP adresi</label>
+                <input type="text" id="ipAddress" name="ipAddress" class="form-control" placeholder="192.168.1.51" required style="min-width:12rem" />
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Ekle</button>
+            </div>
+        </form>
+        <div class="form-text mt-2">
+            Eklemeden önce IP'nin doğru olduğundan emin olmak isterseniz
+            <a asp-controller="Diagnostics" asp-action="Index">SNMP Tanılama</a> sayfasından test edebilirsiniz.
+            Eklenen yazıcı, bir sonraki okuma döngüsünde otomatik izlenmeye başlar — uygulamayı yeniden başlatmaya gerek yoktur.
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>Ad</th>
+                <th>IP adresi</th>
+                <th class="text-end">Okuma sayısı</th>
+                <th>Son okuma</th>
+                <th class="text-end">Son sayaç</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        @if (Model.Count == 0)
+        {
+            <tr><td colspan="6" class="text-muted">Henüz kayıtlı yazıcı yok. Yukarıdaki formdan ekleyebilirsiniz.</td></tr>
+        }
+        @foreach (var p in Model)
+        {
+            <tr>
+                <td>
+                    <form method="post" asp-controller="Printers" asp-action="Rename" asp-route-id="@p.Id" class="d-flex gap-1">
+                        <input type="text" name="name" value="@p.Name" class="form-control form-control-sm" style="min-width:9rem" />
+                        <button type="submit" class="btn btn-sm btn-outline-secondary" title="Adı kaydet">Kaydet</button>
+                    </form>
+                </td>
+                <td class="text-muted">@p.IpAddress</td>
+                <td class="text-end">@p.ReadingCount.ToString("N0", tr)</td>
+                <td>@(p.LatestReadingUtc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "–")</td>
+                <td class="text-end">@(p.LatestCounter is { } c ? c.ToString("N0", tr) : "–")</td>
+                <td class="text-end">
+                    <a class="btn btn-sm btn-outline-secondary" asp-controller="Diagnostics" asp-action="Index" asp-route-ip="@p.IpAddress">Test et</a>
+                    <form method="post" asp-controller="Printers" asp-action="Delete" asp-route-id="@p.Id" class="d-inline"
+                          onsubmit="return confirm('@p.Name (@p.IpAddress) silinsin mi? Geçmiş okumaları da silinecek.');">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Sil</button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>

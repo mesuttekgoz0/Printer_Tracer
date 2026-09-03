@@ -1,0 +1,34 @@
+# Build çıktıları
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# Visual Studio
+.vs/
+*.userosscache
+*.sln.docstates
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# SQLite veritabanı — gerçek yazıcı okumaları burada, repoya gitmemeli
+yazicitakip.db
+yazicitakip.db-shm
+yazicitakip.db-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Yerel/gerçek ayarlar — şirket içi IP vb. bilgiler burada tutulacaksa asla commit edilmesin
+appsettings.Local.json
+appsettings.*.Local.json
+appsettings.Production.json
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store

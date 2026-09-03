@@ -1,0 +1,137 @@
+@using System.Globalization
+@model YaziciTakip.Models.DailySummaryViewModel
+@{
+    ViewData["Title"] = "Günlük Özet";
+    var tr = new CultureInfo("tr-TR");
+    var maxDaily = Model.Days.Select(d => d.Total).DefaultIfEmpty(0).Max();
+    string Day(DateOnly d) => d.ToDateTime(TimeOnly.MinValue).ToString("ddd", tr);
+    bool Weekend(DateOnly d) => d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+
+    var last7 = new { from = Model.To.AddDays(-6).ToString("yyyy-MM-dd"), to = Model.To.ToString("yyyy-MM-dd") };
+    var last30 = new { from = Model.To.AddDays(-29).ToString("yyyy-MM-dd"), to = Model.To.ToString("yyyy-MM-dd") };
+    var last90 = new { from = Model.To.AddDays(-89).ToString("yyyy-MM-dd"), to = Model.To.ToString("yyyy-MM-dd") };
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <h1 class="mb-0">Günlük Özet</h1>
+    <a class="btn btn-outline-secondary btn-sm" asp-action="Lifetime">Ömür boyu sayaç</a>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-auto">
+        <label for="from" class="form-label">Başlangıç</label>
+        <input type="date" id="from" name="from" value="@Model.From.ToString("yyyy-MM-dd")" class="form-control" />
+    </div>
+    <div class="col-auto">
+        <label for="to" class="form-label">Bitiş</label>
+        <input type="date" id="to" name="to" value="@Model.To.ToString("yyyy-MM-dd")" class="form-control" />
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary">Göster</button>
+    </div>
+    <div class="col-auto">
+        <a class="btn btn-outline-secondary" asp-action="Summary" asp-route-from="@last7.from" asp-route-to="@last7.to">Son 7 gün</a>
+        <a class="btn btn-outline-secondary" asp-action="Summary" asp-route-from="@last30.from" asp-route-to="@last30.to">Son 30 gün</a>
+        <a class="btn btn-outline-secondary" asp-action="Summary" asp-route-from="@last90.from" asp-route-to="@last90.to">Son 90 gün</a>
+    </div>
+</form>
+
+@if (!Model.AnyData)
+{
+    <div class="alert alert-info">
+        <strong>@Model.From.ToString("dd.MM.yyyy") – @Model.To.ToString("dd.MM.yyyy")</strong> aralığında kayıtlı okuma bulunamadı.
+    </div>
+    return;
+}
+
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="text-muted small">Dönem toplamı</div>
+            <div class="fs-4 fw-bold">@Model.GrandTotal.ToString("N0", tr)</div>
+            <div class="text-muted small">sayfa</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="text-muted small">Günlük ortalama</div>
+            <div class="fs-4 fw-bold">@Model.DailyAverage.ToString("N1", tr)</div>
+            <div class="text-muted small">@Model.DayCount günde</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="text-muted small">En yoğun gün</div>
+            <div class="fs-4 fw-bold">@(Model.BusiestDay?.Total.ToString("N0", tr) ?? "—")</div>
+            <div class="text-muted small">@(Model.BusiestDay is null ? "" : Model.BusiestDay.Date.ToString("dd.MM.yyyy"))</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="text-muted small">Yazıcı sayısı</div>
+            <div class="fs-4 fw-bold">@Model.Printers.Count</div>
+            <div class="text-muted small">aktif</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">Günlük toplam — @Model.From.ToString("dd.MM.yyyy") – @Model.To.ToString("dd.MM.yyyy")</div>
+    <div class="card-body" style="max-height:26rem;overflow-y:auto">
+        @foreach (var d in Model.Days)
+        {
+            var pct = maxDaily > 0 ? (int)Math.Round(d.Total * 100.0 / maxDaily) : 0;
+            <div class="d-flex align-items-center mb-1">
+                <div style="width:6.5rem" class="text-end pe-2 small @(Weekend(d.Date) ? "text-danger" : "text-muted")">
+                    @d.Date.ToString("dd.MM") @Day(d.Date)
+                </div>
+                <div class="flex-grow-1 bg-light" style="height:1.2rem;border-radius:.2rem;overflow:hidden">
+                    <div style="width:@pct%;height:100%;background:#0d6efd"></div>
+                </div>
+                <div style="width:4.5rem" class="text-end ps-2 small">@d.Total.ToString("N0", tr)</div>
+            </div>
+        }
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>Tarih</th>
+                <th>Gün</th>
+                @foreach (var p in Model.Printers)
+                {
+                    <th class="text-end">@p.Name</th>
+                }
+                <th class="text-end">Toplam</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var d in Model.Days)
+        {
+            <tr class="@(Weekend(d.Date) ? "table-secondary" : "")">
+                <td>@d.Date.ToString("dd.MM.yyyy")</td>
+                <td class="text-muted">@Day(d.Date)</td>
+                @foreach (var p in Model.Printers)
+                {
+                    var v = d.PagesFor(p.Id);
+                    <td class="text-end @(v > 0 ? "" : "text-muted")">@(v > 0 ? v.ToString("N0", tr) : "–")</td>
+                }
+                <td class="text-end fw-bold">@d.Total.ToString("N0", tr)</td>
+            </tr>
+        }
+        </tbody>
+        <tfoot>
+            <tr class="table-light">
+                <th colspan="2">Dönem toplamı</th>
+                @foreach (var p in Model.Printers)
+                {
+                    var pt = Model.PrinterTotals.TryGetValue(p.Id, out var v) ? v : 0;
+                    <th class="text-end">@pt.ToString("N0", tr)</th>
+                }
+                <th class="text-end">@Model.GrandTotal.ToString("N0", tr)</th>
+            </tr>
+        </tfoot>
+    </table>
+</div>
