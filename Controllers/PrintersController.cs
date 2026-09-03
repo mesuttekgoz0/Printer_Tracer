@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using YaziciTakip.Data;
 using YaziciTakip.Models;
+using YaziciTakip.Services;
 
 namespace YaziciTakip.Controllers;
 
@@ -16,10 +17,12 @@ namespace YaziciTakip.Controllers;
 public class PrintersController : Controller
 {
     private readonly AppDbContext _db;
+    private readonly ISnmpService _snmp;
 
-    public PrintersController(AppDbContext db)
+    public PrintersController(AppDbContext db, ISnmpService snmp)
     {
         _db = db;
+        _snmp = snmp;
     }
 
     public async Task<IActionResult> Index()
@@ -78,16 +81,35 @@ public class PrintersController : Controller
             return RedirectToAction(nameof(Index));
         }
 
-        _db.Printers.Add(new Printer { Name = name, IpAddress = ipAddress });
+        var printer = new Printer { Name = name, IpAddress = ipAddress };
+        _db.Printers.Add(printer);
 
         try
         {
             await _db.SaveChangesAsync();
-            TempData["Success"] = $"{name} ({ipAddress}) eklendi. Bir sonraki okuma döngüsünde (en geç birkaç dakika içinde) otomatik izlenmeye başlayacak.";
         }
         catch (DbUpdateException)
         {
             TempData["Error"] = $"{ipAddress} zaten kayıtlı bir yazıcı.";
+            return RedirectToAction(nameof(Index));
+        }
+
+        // Kaydedilir edilmez bir kez SNMP okuması yap; başarılıysa ilk kaydı oluştur.
+        var pageCount = await _snmp.GetPageCountAsync(printer.IpAddress, HttpContext.RequestAborted);
+        if (pageCount is not null)
+        {
+            _db.PrintReadings.Add(new PrintReading
+            {
+                PrinterId = printer.Id,
+                PageCount = pageCount.Value,
+                TimestampUtc = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            TempData["Success"] = $"{name} ({ipAddress}) eklendi. İlk okuma yapıldı: sayaç = {pageCount.Value}.";
+        }
+        else
+        {
+            TempData["Success"] = $"{name} ({ipAddress}) eklendi, ancak ilk SNMP okuması yapılamadı (yazıcıya ulaşılamadı). Bir sonraki okuma döngüsünde tekrar denenecek.";
         }
 
         return RedirectToAction(nameof(Index));

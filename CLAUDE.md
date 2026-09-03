@@ -97,6 +97,11 @@ YaziciTakip/
 - Linkler kaldırıldı: `_Layout.cshtml` nav'daki "Ömür Boyu Sayaç", `Views/Report/Summary.cshtml`'deki "Ömür boyu sayaç" butonu, README'deki madde.
 - `/Report` artık sadece `Summary` action'ını içeriyor. Ömür boyu sayaç bilgisi hâlâ `PrintReading.PageCount` ham değerinde mevcut, sadece ayrı sayfası yok.
 
+### Not (2026-09-03) — Yeni yazıcıda anında ilk okuma
+- `PrintersController.Create`, yazıcıyı DB'ye kaydettikten hemen sonra `ISnmpService.GetPageCountAsync` ile bir kez SNMP okuması yapıp başarılıysa ilk `PrintReading` kaydını oluşturuyor. Böylece kullanıcı 1440 dk'lık döngüyü beklemeden yazıcının başlangıç sayacını görüyor.
+- Ulaşılamazsa yazıcı yine eklenir, TempData mesajı "ilk okuma yapılamadı" der; bir sonraki döngüde tekrar denenir. SNMP çağrısı POST içinde senkron (timeout ~5 sn, v1 fallback ile ~10 sn) — kabul edilebilir.
+- `ISnmpService` singleton olduğu için controller'a doğrudan enjekte edildi.
+
 ## Notlar
 - Henüz yazıcı IP'leri ve SNMP versiyonu netleşmedi — bu bilgiler geldikçe `appsettings.json` ve bağlantı testleri güncellenecek.
 - Kullanıcı/IP bazlı "hangi istekler gönderildi" bilgisi bu mimaride mevcut değil; bu sınırlama yöneticiyle paylaşılmalı.
