@@ -84,47 +84,4 @@ public class ReportController : Controller
 
         return View(vm);
     }
-
-    /// <summary>
-    /// Yazıcıların ömür boyu (dahili) sayaç değerlerini gösterir. Printer-MIB sayacı
-    /// yazıcı üretildiğinden/sıfırlandığından beri bastığı TÜM sayfaları içerdiği için,
-    /// izlemeye başlamadan önceki dönemin de bu sayaca dahil olduğunu gösterir.
-    /// </summary>
-    public async Task<IActionResult> Lifetime()
-    {
-        var printers = await _db.Printers.AsNoTracking()
-            .OrderBy(p => p.Name)
-            .ToListAsync();
-
-        var vm = new LifetimeViewModel();
-
-        foreach (var printer in printers)
-        {
-            var first = await _db.PrintReadings.AsNoTracking()
-                .Where(r => r.PrinterId == printer.Id)
-                .OrderBy(r => r.TimestampUtc)
-                .Select(r => new { r.TimestampUtc, r.PageCount })
-                .FirstOrDefaultAsync();
-
-            var last = await _db.PrintReadings.AsNoTracking()
-                .Where(r => r.PrinterId == printer.Id)
-                .OrderByDescending(r => r.TimestampUtc)
-                .Select(r => new { r.TimestampUtc, r.PageCount })
-                .FirstOrDefaultAsync();
-
-            vm.Printers.Add(new PrinterLifetimeRow
-            {
-                PrinterId = printer.Id,
-                PrinterName = printer.Name,
-                IpAddress = printer.IpAddress,
-                HasReadings = first is not null,
-                FirstReadingUtc = first?.TimestampUtc,
-                FirstCounter = first?.PageCount,
-                LatestReadingUtc = last?.TimestampUtc,
-                LatestCounter = last?.PageCount,
-            });
-        }
-
-        return View(vm);
-    }
 }

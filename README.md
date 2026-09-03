@@ -22,8 +22,6 @@ sayfa sayısını verir.
   kartları (dönem toplamı / günlük ortalama / en yoğun gün), 7/30/90 gün
   kısayolları, hafta sonu vurgusu. Aylık rapor için ayın 1'i → ay sonu aralığı
   girilerek kullanılır.
-- **Ömür Boyu Sayaç raporu** (`/Report/Lifetime`) – her yazıcı için ilk okumadaki
-  ham sayaç, güncel ham sayaç ve izleme süresince basılan fark.
 - **SNMP Tanılama sayfası** (`/Diagnostics?ip=<ip>`) – bir yazıcıya GET/WALK yapıp
   `sysDescr`, `sysName`, bilinen sayfa-sayacı OID'leri ve `prtMarkerLifeCount`
   alt ağacını gösterir; marka tespiti yapıp doğru `PageCountOid`'i önerir. Yeni

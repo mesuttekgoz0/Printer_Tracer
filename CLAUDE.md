@@ -88,6 +88,15 @@ YaziciTakip/
 - Gerçek yazıcılar artık config'e hiç ihtiyaç duymadan `/Yazıcılar` sayfasından doğrudan DB'ye ekleniyor (bkz. Yapılacaklar madde 6 altındaki Printers UI notu) — DB dosyası `.gitignore`'da olduğu için bu IP'ler repoya hiç girmiyor. "IT" (.205) DB'de kalmaya devam ediyor (35+ okuma), sadece appsettings.json'dan çıkarıldı; veri kaybı yok (worker config'den silineni DB'den silmiyor).
 - Henüz `git init`/ilk commit yapılmadı — kullanıcı sadece ignore dosyasını istedi, push adımı onayı bekleniyor.
 
+### Not (2026-09-03) — Git init + GitHub push + README
+- `git init` yapıldı, ilk commit atıldı, `main` dalı `https://github.com/mesuttekgoz0/Printer_Tracer` reposuna push edildi (remote'ta hazır "Initial commit"/README.md üzerine rebase edildi).
+- `README.md` yeniden yazıldı: özellikler, teknoloji tablosu, `dotnet run` ile çalıştırma, `appsettings.json` yapılandırması, yazıcı ekleme, sınırlar. Şirket/staj bağlamı README'de geçmiyor (kullanıcı isteği).
+
+### Not (2026-09-03) — Ömür Boyu Sayaç sayfası kaldırıldı
+- Kullanıcı `/Report/Lifetime` sayfasını sildirdi. Silinenler: `Views/Report/Lifetime.cshtml`, `Models/LifetimeViewModel.cs` (`LifetimeViewModel`, `PrinterLifetimeRow`), `ReportController.Lifetime()` action'ı.
+- Linkler kaldırıldı: `_Layout.cshtml` nav'daki "Ömür Boyu Sayaç", `Views/Report/Summary.cshtml`'deki "Ömür boyu sayaç" butonu, README'deki madde.
+- `/Report` artık sadece `Summary` action'ını içeriyor. Ömür boyu sayaç bilgisi hâlâ `PrintReading.PageCount` ham değerinde mevcut, sadece ayrı sayfası yok.
+
 ## Notlar
 - Henüz yazıcı IP'leri ve SNMP versiyonu netleşmedi — bu bilgiler geldikçe `appsettings.json` ve bağlantı testleri güncellenecek.
 - Kullanıcı/IP bazlı "hangi istekler gönderildi" bilgisi bu mimaride mevcut değil; bu sınırlama yöneticiyle paylaşılmalı.
