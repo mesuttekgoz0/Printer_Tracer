@@ -43,45 +43,50 @@
     </div>
 </div>
 
-<div class="table-responsive">
-    <table class="table table-sm table-bordered align-middle">
-        <thead class="table-light">
-            <tr>
-                <th>Ad</th>
-                <th>IP adresi</th>
-                <th class="text-end">Okuma sayısı</th>
-                <th>Son okuma</th>
-                <th class="text-end">Son sayaç</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-        @if (Model.Count == 0)
-        {
-            <tr><td colspan="6" class="text-muted">Henüz kayıtlı yazıcı yok. Yukarıdaki formdan ekleyebilirsiniz.</td></tr>
-        }
-        @foreach (var p in Model)
-        {
-            <tr>
-                <td>
-                    <form method="post" asp-controller="Printers" asp-action="Rename" asp-route-id="@p.Id" class="d-flex gap-1">
-                        <input type="text" name="name" value="@p.Name" class="form-control form-control-sm" style="min-width:9rem" />
-                        <button type="submit" class="btn btn-sm btn-outline-secondary" title="Adı kaydet">Kaydet</button>
-                    </form>
-                </td>
-                <td class="text-muted">@p.IpAddress</td>
-                <td class="text-end">@p.ReadingCount.ToString("N0", tr)</td>
-                <td>@(p.LatestReadingUtc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "–")</td>
-                <td class="text-end">@(p.LatestCounter is { } c ? c.ToString("N0", tr) : "–")</td>
-                <td class="text-end">
-                    <a class="btn btn-sm btn-outline-secondary" asp-controller="Diagnostics" asp-action="Index" asp-route-ip="@p.IpAddress">Test et</a>
-                    <form method="post" asp-controller="Printers" asp-action="Delete" asp-route-id="@p.Id" class="d-inline"
-                          onsubmit="return confirm('@p.Name (@p.IpAddress) silinsin mi? Geçmiş okumaları da silinecek.');">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">Sil</button>
-                    </form>
-                </td>
-            </tr>
-        }
-        </tbody>
-    </table>
+<div class="card">
+    <div class="card-header">Kayıtlı yazıcılar</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Ad</th>
+                        <th>IP adresi</th>
+                        <th class="text-end">Okuma sayısı</th>
+                        <th>Son okuma</th>
+                        <th class="text-end">Son sayaç</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @if (Model.Count == 0)
+                {
+                    <tr><td colspan="6" class="p-4 text-center text-muted">Henüz kayıtlı yazıcı yok. Yukarıdaki formdan ekleyebilirsiniz.</td></tr>
+                }
+                @foreach (var p in Model)
+                {
+                    <tr>
+                        <td>
+                            <form method="post" asp-controller="Printers" asp-action="Rename" asp-route-id="@p.Id" class="d-flex gap-1">
+                                <input type="text" name="name" value="@p.Name" class="form-control form-control-sm" style="min-width:9rem" />
+                                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Adı kaydet">Kaydet</button>
+                            </form>
+                        </td>
+                        <td class="text-muted"><code>@p.IpAddress</code></td>
+                        <td class="text-end">@p.ReadingCount.ToString("N0", tr)</td>
+                        <td class="text-muted small">@(p.LatestReadingUtc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "–")</td>
+                        <td class="text-end">@(p.LatestCounter is { } c ? c.ToString("N0", tr) : "–")</td>
+                        <td class="text-end text-nowrap">
+                            <a class="btn btn-sm btn-outline-secondary" asp-controller="Diagnostics" asp-action="Index" asp-route-ip="@p.IpAddress">Test et</a>
+                            <form method="post" asp-controller="Printers" asp-action="Delete" asp-route-id="@p.Id" class="d-inline"
+                                  onsubmit="return confirm('@p.Name (@p.IpAddress) silinsin mi? Geçmiş okumaları da silinecek.');">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Sil</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
