@@ -102,6 +102,13 @@ YaziciTakip/
 - Ulaşılamazsa yazıcı yine eklenir, TempData mesajı "ilk okuma yapılamadı" der; bir sonraki döngüde tekrar denenir. SNMP çağrısı POST içinde senkron (timeout ~5 sn, v1 fallback ile ~10 sn) — kabul edilebilir.
 - `ISnmpService` singleton olduğu için controller'a doğrudan enjekte edildi.
 
+### Not (2026-09-03) — Görünüm yenilendi (panel + koyu tema)
+- Hazır ASP.NET şablon görünümü değiştirildi. Koyu lacivert/slate navbar (`site.css`'te CSS değişkenleri: `--app-navy`, `--app-accent` vb.), "YT" marka rozeti + "Yazıcı Takip" adı, aktif sekme vurgusu (`_Layout.cshtml` içinde `NavActive` helper'ı route'a bakıyor).
+- Nav'dan "Home"/"Privacy" kaldırıldı; sekmeler: Panel · Yazıcılar · Günlük Özet · SNMP Tanılama. Gizlilik linki sadece footer'da. `<html lang="tr">`, başlık `… · Yazıcı Takip`.
+- Ana sayfa artık dashboard: `HomeController.Index` `AppDbContext` alıp `DashboardViewModel` dolduruyor (kayıtlı yazıcı sayısı, bu ay / bugün basılan tahmini sayfa = ardışık okuma pozitif deltalarının toplamı, en son okuma zamanı, yazıcı bazlı kısa tablo). `Models/DashboardViewModel.cs` eklendi.
+- `site.css` tamamen elden geçti (metric-card, kart/tablo/buton override'ları). Bootstrap korunuyor, sadece üzerine yazılıyor.
+- Tarayıcıda 3 sayfa (Panel, Günlük Özet, Yazıcılar) kontrol edildi, tema tutarlı.
+
 ## Notlar
 - Henüz yazıcı IP'leri ve SNMP versiyonu netleşmedi — bu bilgiler geldikçe `appsettings.json` ve bağlantı testleri güncellenecek.
 - Kullanıcı/IP bazlı "hangi istekler gönderildi" bilgisi bu mimaride mevcut değil; bu sınırlama yöneticiyle paylaşılmalı.
