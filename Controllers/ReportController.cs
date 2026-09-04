@@ -15,14 +15,15 @@ public class ReportController : Controller
     }
 
     /// <summary>
-    /// Bir tarih aralığı için gün gün toplam basılan sayfa özeti (varsayılan son 30 gün).
-    /// Her günün deltası, o güne ait ardışık okuma farklarının toplamıdır.
+    /// Bir tarih aralığındaki (varsayılan: içinde bulunulan ayın 1'inden bugüne) tek tek SNMP
+    /// okumaları ve her okumanın bir öncekine göre farkı; ayrıca dönem toplamı ve yazıcı bazlı toplamlar.
     /// </summary>
-    public async Task<IActionResult> Summary(DateOnly? from, DateOnly? to)
+    public async Task<IActionResult> Summary(DateOnly? from, DateOnly? to, bool all = false)
     {
+        const int RecentReadingsLimit = 30;
         var today = DateOnly.FromDateTime(DateTime.Now);
         var toDay = to ?? today;
-        var fromDay = from ?? toDay.AddDays(-29);
+        var fromDay = from ?? new DateOnly(toDay.Year, toDay.Month, 1);
 
         if (fromDay > toDay)
             (fromDay, toDay) = (toDay, fromDay);
@@ -46,41 +47,52 @@ public class ReportController : Controller
             Printers = printers.Select(p => new PrinterRef { Id = p.Id, Name = p.Name }).ToList(),
         };
 
-        var dayMap = new Dictionary<DateOnly, DailySummaryRow>();
-        for (var d = fromDay; d <= toDay; d = d.AddDays(1))
-            dayMap[d] = new DailySummaryRow { Date = d };
+        var log = new List<ReadingLogRow>();
 
         foreach (var printer in printers)
         {
-            // İlk günün deltasını hesaplayabilmek için aralık başından önceki okumayı da al.
+            // İlk okumanın deltasını hesaplayabilmek için aralık başından önceki okumayı da al.
             var readings = await _db.PrintReadings.AsNoTracking()
                 .Where(r => r.PrinterId == printer.Id && r.TimestampUtc < endUtc)
                 .OrderBy(r => r.TimestampUtc)
                 .Select(r => new { r.TimestampUtc, r.PageCount })
                 .ToListAsync();
 
-            for (var i = 1; i < readings.Count; i++)
+            for (var i = 0; i < readings.Count; i++)
             {
-                var delta = readings[i].PageCount - readings[i - 1].PageCount;
-                if (delta <= 0)
-                    continue;
-
                 var dateLocal = DateOnly.FromDateTime(readings[i].TimestampUtc.ToLocalTime());
                 if (dateLocal < fromDay || dateLocal > toDay)
                     continue;
 
-                var row = dayMap[dateLocal];
-                row.PerPrinter[printer.Id] = row.PagesFor(printer.Id) + delta;
-                row.Total += delta;
+                long? delta = null;
+                if (i > 0)
+                {
+                    var diff = readings[i].PageCount - readings[i - 1].PageCount;
+                    delta = diff >= 0 ? diff : null;
 
-                vm.PrinterTotals[printer.Id] = (vm.PrinterTotals.TryGetValue(printer.Id, out var pt) ? pt : 0) + delta;
+                    if (diff > 0)
+                    {
+                        vm.GrandTotal += diff;
+                        vm.PrinterTotals[printer.Id] =
+                            (vm.PrinterTotals.TryGetValue(printer.Id, out var pt) ? pt : 0) + diff;
+                    }
+                }
+
+                log.Add(new ReadingLogRow
+                {
+                    TimestampUtc = readings[i].TimestampUtc,
+                    PrinterId = printer.Id,
+                    PrinterName = printer.Name,
+                    PageCount = readings[i].PageCount,
+                    Delta = delta,
+                });
             }
         }
 
-        vm.Days = dayMap.Values.OrderBy(d => d.Date).ToList();
-        vm.GrandTotal = vm.Days.Sum(d => d.Total);
-        vm.DailyAverage = vm.DayCount > 0 ? (double)vm.GrandTotal / vm.DayCount : 0;
-        vm.BusiestDay = vm.Days.Where(d => d.Total > 0).OrderByDescending(d => d.Total).FirstOrDefault();
+        log.Sort((a, b) => b.TimestampUtc.CompareTo(a.TimestampUtc));
+        vm.ReadingsTotal = log.Count;
+        vm.ShowAllReadings = all;
+        vm.Readings = all ? log : log.Take(RecentReadingsLimit).ToList();
 
         return View(vm);
     }

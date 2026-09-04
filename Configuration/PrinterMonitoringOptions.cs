@@ -9,7 +9,13 @@ public class PrinterMonitoringOptions
 {
     public const string SectionName = "PrinterMonitoring";
 
-    /// <summary>Tüm yazıcıların kaç dakikada bir okunacağı. Test için 15.</summary>
+    /// <summary>
+    /// Arka planda periyodik SNMP okuması yapılsın mı? Kapalıysa (varsayılan) okumalar
+    /// yalnızca arayüzdeki "Şimdi Oku" düğmesiyle, kullanıcı istediğinde yapılır.
+    /// </summary>
+    public bool PollingEnabled { get; set; } = false;
+
+    /// <summary>Periyodik okuma açıksa yazıcıların kaç dakikada bir okunacağı.</summary>
     public int PollingIntervalMinutes { get; set; } = 15;
 
     /// <summary>

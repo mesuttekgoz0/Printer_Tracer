@@ -7,24 +7,23 @@ using YaziciTakip.Models;
 namespace YaziciTakip.Services;
 
 /// <summary>
-/// Arka planda periyodik olarak (config: PollingIntervalMinutes) tüm yazıcıların
-/// SNMP sayfa sayacını okur ve SQLite'a zaman damgasıyla kaydeder.
+/// Açılışta yalnızca DB migration + config yazıcı eşitlemesini yapar; <b>sayaç okuması yapmaz</b>.
+/// <c>PrinterMonitoring:PollingEnabled=true</c> ise periyodik olarak (config: PollingIntervalMinutes)
+/// tüm yazıcıların SNMP sayfa sayacını okur — ilk okuma bir tam aralık sonra, program açılır açılmaz değil.
+/// Varsayılan olarak periyodik okuma kapalıdır; okumalar yalnızca arayüzdeki "Sayaç Oku" ile yapılır.
 /// </summary>
 public class PrinterMonitorWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ISnmpService _snmpService;
     private readonly PrinterMonitoringOptions _options;
     private readonly ILogger<PrinterMonitorWorker> _logger;
 
     public PrinterMonitorWorker(
         IServiceScopeFactory scopeFactory,
-        ISnmpService snmpService,
         IOptions<PrinterMonitoringOptions> options,
         ILogger<PrinterMonitorWorker> logger)
     {
         _scopeFactory = scopeFactory;
-        _snmpService = snmpService;
         _options = options.Value;
         _logger = logger;
     }
@@ -49,22 +48,22 @@ public class PrinterMonitorWorker : BackgroundService
             _logger.LogError(ex, "Başlangıç hazırlığı başarısız (DB/migration/seed).");
         }
 
-        var interval = TimeSpan.FromMinutes(Math.Max(1, _options.PollingIntervalMinutes));
-        _logger.LogInformation(
-            "Yazıcı izleme aktif. Okuma aralığı: {Interval}. İlk okuma birkaç saniye içinde başlayacak.", interval);
-
-        // Konsol başlangıç loglarının oturması için kısa bir gecikme, sonra ilk okuma.
-        try
+        if (!_options.PollingEnabled)
         {
-            await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
+            _logger.LogInformation(
+                "Periyodik SNMP okuma kapalı (PrinterMonitoring:PollingEnabled=false). " +
+                "Okumalar yalnızca arayüzdeki 'Şimdi Oku' düğmesiyle yapılacak.");
             return;
         }
 
+        var interval = TimeSpan.FromMinutes(Math.Max(1, _options.PollingIntervalMinutes));
+        _logger.LogInformation(
+            "Periyodik yazıcı izleme aktif. Okuma aralığı: {Interval}. " +
+            "Açılışta okuma yapılmaz; ilk okuma bir aralık sonra başlar.", interval);
+
+        // Program açılır açılmaz okuma YAPMA: ilk okumayı bir tam aralık bekledikten sonra yap.
         using var timer = new PeriodicTimer(interval);
-        do
+        while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
             {
@@ -79,7 +78,6 @@ public class PrinterMonitorWorker : BackgroundService
                 _logger.LogError(ex, "Okuma döngüsünde beklenmeyen hata.");
             }
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     /// <summary>
@@ -144,50 +142,21 @@ public class PrinterMonitorWorker : BackgroundService
     private async Task PollAllPrintersAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var reader = scope.ServiceProvider.GetRequiredService<PrinterReadingService>();
 
-        var printers = await db.Printers.AsNoTracking().ToListAsync(cancellationToken);
-        if (printers.Count == 0)
+        var result = await reader.ReadAllAsync(printerIds: null, cancellationToken);
+
+        if (result.Total == 0)
         {
             _logger.LogWarning("Kayıtlı yazıcı yok; okuma atlandı.");
             return;
         }
 
-        // Tüm yazıcıları paralel oku: ulaşılamayanlar için 3 yazıcı ~30 sn yerine ~10 sn sürer.
-        var timestamp = DateTime.UtcNow;
-        var reads = await Task.WhenAll(printers.Select(async printer =>
-        {
-            var pageCount = await _snmpService.GetPageCountAsync(printer.IpAddress, cancellationToken);
-            return (printer, pageCount);
-        }));
-
-        var failed = new List<string>();
-        foreach (var (printer, pageCount) in reads)
-        {
-            if (pageCount is null)
-            {
-                failed.Add(printer.Name);
-                _logger.LogDebug("{Name} ({Ip}): sayaç okunamadı.", printer.Name, printer.IpAddress);
-                continue;
-            }
-
-            db.PrintReadings.Add(new PrintReading
-            {
-                PrinterId = printer.Id,
-                PageCount = pageCount.Value,
-                TimestampUtc = timestamp,
-            });
-            _logger.LogDebug("{Name} ({Ip}): sayaç = {Count}", printer.Name, printer.IpAddress, pageCount.Value);
-        }
-
-        var saved = reads.Count(r => r.pageCount is not null);
-        if (saved > 0)
-            await db.SaveChangesAsync(cancellationToken);
-
-        if (failed.Count == 0)
-            _logger.LogInformation("Okuma tamamlandı: {Saved}/{Total} yazıcı kaydedildi.", saved, printers.Count);
+        if (result.FailedNames.Count == 0)
+            _logger.LogInformation("Okuma tamamlandı: {Saved}/{Total} yazıcı kaydedildi.",
+                result.SavedCount, result.Total);
         else
             _logger.LogWarning("Okuma tamamlandı: {Saved}/{Total} kaydedildi. Ulaşılamayan: {Failed}",
-                saved, printers.Count, string.Join(", ", failed));
+                result.SavedCount, result.Total, string.Join(", ", result.FailedNames));
     }
 }

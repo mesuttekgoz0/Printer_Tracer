@@ -21,7 +21,7 @@
     <header>
         <nav class="navbar navbar-expand-md app-navbar mb-4">
             <div class="container">
-                <a class="navbar-brand" asp-controller="Home" asp-action="Index">
+                <a class="navbar-brand" asp-controller="Readings" asp-action="Index">
                     <span class="brand-mark">YT</span>
                     Yazıcı Takip
                 </a>
@@ -32,13 +32,16 @@
                 <div class="navbar-collapse collapse" id="mainNav">
                     <ul class="navbar-nav ms-auto">
                         <li class="nav-item">
-                            <a class="nav-link @NavActive("Home", "Index")" asp-controller="Home" asp-action="Index">Panel</a>
+                            <a class="nav-link @NavActive("Readings")" asp-controller="Readings" asp-action="Index">Sayaç Oku</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link @NavActive("Report")" asp-controller="Report" asp-action="Summary">Rapor</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link @NavActive("Hakedis")" asp-controller="Hakedis" asp-action="Index">Hakedişler</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link @NavActive("Printers")" asp-controller="Printers" asp-action="Index">Yazıcılar</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link @NavActive("Report")" asp-controller="Report" asp-action="Summary">Günlük Özet</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link @NavActive("Diagnostics")" asp-controller="Diagnostics" asp-action="Index">SNMP Tanılama</a>

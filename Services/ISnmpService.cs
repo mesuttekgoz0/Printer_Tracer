@@ -11,6 +11,12 @@ public interface ISnmpService
     Task<long?> GetPageCountAsync(string ipAddress, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Yazıcının marka/model bilgisini (<c>sysDescr</c>, OID 1.3.6.1.2.1.1.1.0) tek bir SNMP GET ile okur.
+    /// Uzun/çok satırlı dönerse kısaltılır. Ulaşılamazsa/boşsa <c>null</c> döner.
+    /// </summary>
+    Task<string?> GetModelAsync(string ipAddress, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Yazıcıya tanılama amaçlı SNMP sorgusu yapar: kimlik bilgisi, config'deki OID,
     /// bilinen HP OID'leri ve Printer-MIB sayaç alt ağacının walk sonucu.
     /// Doğru <c>PageCountOid</c> değerini belirlemek için kullanılır.

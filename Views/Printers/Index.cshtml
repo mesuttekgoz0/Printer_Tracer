@@ -38,7 +38,8 @@
         <div class="form-text mt-2">
             Eklemeden önce IP'nin doğru olduğundan emin olmak isterseniz
             <a asp-controller="Diagnostics" asp-action="Index">SNMP Tanılama</a> sayfasından test edebilirsiniz.
-            Yazıcı eklenir eklenmez bir kez SNMP okuması yapılıp ilk kayıt oluşturulur; sonrasında normal okuma döngüsüyle izlenmeye devam eder — uygulamayı yeniden başlatmaya gerek yoktur.
+            Yazıcı eklendiğinde otomatik okuma yapılmaz; ilk sayaç değeri için
+            <a asp-controller="Readings" asp-action="Index">Sayaç Oku</a> sayfasından okuma alın.
         </div>
     </div>
 </div>

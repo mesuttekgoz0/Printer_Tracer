@@ -1,0 +1,64 @@
+@using System.Globalization
+@model List<YaziciTakip.Controllers.HakedisListRow>
+@{
+    ViewData["Title"] = "Hakedişler";
+    var tr = new CultureInfo("tr-TR");
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div>
+        <h1 class="mb-1">Hakedişler</h1>
+        <div class="text-muted small">Oluşturulan hakediş belgeleri. Yeni belge Sayaç Oku sayfasından, yazıcı seçip “Hakediş oluştur” ile üretilir.</div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" asp-controller="Readings" asp-action="Index">Sayaç Oku</a>
+</div>
+
+@if (TempData["Success"] is string ok)
+{
+    <div class="alert alert-success">@ok</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="card">
+    <div class="card-body p-0">
+        @if (Model.Count == 0)
+        {
+            <div class="p-4 text-center text-muted">Henüz hakediş oluşturulmadı.</div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>No</th>
+                            <th>Düzenleme</th>
+                            <th>Dönem</th>
+                            <th class="text-end">Yazıcı</th>
+                            <th class="text-end">Toplam sayfa</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var h in Model)
+                    {
+                        <tr>
+                            <td class="fw-semibold">@h.Number</td>
+                            <td class="text-muted small">@h.CreatedUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm", tr)</td>
+                            <td class="text-muted small">@h.PeriodStart.ToString("dd.MM.yyyy") – @h.PeriodEnd.ToString("dd.MM.yyyy")</td>
+                            <td class="text-end">@h.PrinterCount</td>
+                            <td class="text-end">@h.TotalPages.ToString("N0", tr)</td>
+                            <td class="text-end">
+                                <a class="btn btn-sm btn-outline-secondary" asp-action="Details" asp-route-id="@h.Id">Aç</a>
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>

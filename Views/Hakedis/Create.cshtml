@@ -1,0 +1,138 @@
+@using System.Globalization
+@model YaziciTakip.Models.HakedisCreateViewModel
+@{
+    ViewData["Title"] = "Hakediş Oluştur";
+    var tr = new CultureInfo("tr-TR");
+    string N(long v) => v.ToString("N0", tr);
+    string Dt(DateTime? utc) => utc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm", tr) : "–";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div>
+        <h1 class="mb-1">Hakediş Oluştur</h1>
+        <div class="text-muted small">Değerleri kontrol edip gerekiyorsa düzeltin, sonra kaydedin. Kaydedilince numara verilir ve değerler dondurulur.</div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" asp-controller="Readings" asp-action="Index">Vazgeç</a>
+</div>
+
+@if (Model.Skipped.Count > 0)
+{
+    <div class="alert alert-warning">
+        Okuması olmadığı için eklenmeyen yazıcı(lar): <strong>@string.Join(", ", Model.Skipped)</strong>.
+        Önce <a asp-controller="Readings" asp-action="Index">Sayaç Oku</a> ile okuma alın.
+    </div>
+}
+
+<form method="post" asp-action="Save">
+    <div class="card mb-3">
+        <div class="card-body row g-3">
+            <div class="col-sm-3">
+                <label class="form-label" for="PeriodStart">Dönem başlangıcı</label>
+                <input type="date" class="form-control" id="PeriodStart" name="PeriodStart"
+                       value="@Model.PeriodStart.ToString("yyyy-MM-dd")" />
+            </div>
+            <div class="col-sm-3">
+                <label class="form-label" for="PeriodEnd">Dönem bitişi</label>
+                <input type="date" class="form-control" id="PeriodEnd" name="PeriodEnd"
+                       value="@Model.PeriodEnd.ToString("yyyy-MM-dd")" />
+            </div>
+            <div class="col-sm-6">
+                <label class="form-label" for="Note">Açıklama (dönem adı, sözleşme no, firma…)</label>
+                <input type="text" class="form-control" id="Note" name="Note" maxlength="500"
+                       placeholder="ör. Ocak 2026 – Olivetti servis hakedişi" />
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Yazıcılar</div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle mb-0">
+                    <thead style="background:#f8fafc">
+                        <tr>
+                            <th style="width:2.5rem" class="text-end">#</th>
+                            <th>Yazıcı</th>
+                            <th>Marka / Model</th>
+                            <th class="text-end" style="width:10rem">Önceki sayaç</th>
+                            <th class="text-end" style="width:10rem">Şimdiki sayaç</th>
+                            <th class="text-end" style="width:8rem">Fark</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @for (var i = 0; i < Model.Rows.Count; i++)
+                    {
+                        var r = Model.Rows[i];
+                        <tr>
+                            <td class="text-end text-muted">@(i + 1)</td>
+                            <td class="fw-semibold">
+                                @r.PrinterName
+                                <input type="hidden" name="Rows[@i].PrinterId" value="@r.PrinterId" />
+                                <input type="hidden" name="Rows[@i].PrinterName" value="@r.PrinterName" />
+                                @if (r.FirstHakedis)
+                                {
+                                    <div class="text-warning small" title="Bu yazıcının ilk hakedişi; önceki sayaç ilk okumadan (@Dt(r.PreviousReadingUtc)) alındı, gerekirse düzeltin.">
+                                        ilk hakediş — önceki sayacı kontrol edin
+                                    </div>
+                                }
+                            </td>
+                            <td class="text-muted small">
+                                @(string.IsNullOrWhiteSpace(r.Model) ? "–" : r.Model)
+                                <input type="hidden" name="Rows[@i].Model" value="@r.Model" />
+                            </td>
+                            <td>
+                                <input type="number" class="form-control form-control-sm text-end js-prev"
+                                       name="Rows[@i].PreviousCounter" value="@r.PreviousCounter" step="1" />
+                                <div class="form-text text-end">@Dt(r.PreviousReadingUtc)</div>
+                            </td>
+                            <td>
+                                <input type="number" class="form-control form-control-sm text-end js-cur"
+                                       name="Rows[@i].CurrentCounter" value="@r.CurrentCounter" step="1" />
+                                <div class="form-text text-end">@Dt(r.CurrentReadingUtc)</div>
+                            </td>
+                            <td class="text-end fw-bold js-diff">@(r.Pages is { } p ? N(p) : "?")</td>
+                        </tr>
+                    }
+                    </tbody>
+                    <tfoot>
+                        <tr style="background:#f8fafc">
+                            <th colspan="5" class="text-end">Toplam</th>
+                            <th class="text-end js-total">@N(Model.Rows.Sum(x => x.Pages ?? 0))</th>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer d-flex justify-content-end gap-2">
+            <a class="btn btn-outline-secondary" asp-controller="Readings" asp-action="Index">Vazgeç</a>
+            <button type="submit" class="btn btn-primary">Hakedişi kaydet</button>
+        </div>
+    </div>
+</form>
+
+@section Scripts {
+    <script>
+        (function () {
+            function fmt(n) { return n.toLocaleString('tr-TR'); }
+            function recalc() {
+                var total = 0;
+                document.querySelectorAll('tbody tr').forEach(function (tr) {
+                    var prev = parseInt(tr.querySelector('.js-prev')?.value || '0', 10);
+                    var cur = parseInt(tr.querySelector('.js-cur')?.value || '0', 10);
+                    var cell = tr.querySelector('.js-diff');
+                    if (!cell) return;
+                    if (isNaN(prev) || isNaN(cur) || cur < prev) { cell.textContent = '?'; return; }
+                    var d = cur - prev;
+                    cell.textContent = fmt(d);
+                    total += d;
+                });
+                var t = document.querySelector('.js-total');
+                if (t) t.textContent = fmt(total);
+            }
+            document.querySelectorAll('.js-prev, .js-cur').forEach(function (el) {
+                el.addEventListener('input', recalc);
+            });
+            recalc();
+        })();
+    </script>
+}

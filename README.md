@@ -1,8 +1,9 @@
 # Printer_Tracer (Yazıcı Takip Sistemi)
 
 Ağa **doğrudan bağlı** (print server olmadan) yazıcıların sayfa sayacını SNMP ile
-periyodik okuyup SQLite'a kaydeden ve bu veriyi rapor/grafik olarak sunan bir
-ASP.NET Core web uygulaması.
+okuyup SQLite'a kaydeden ve bu veriyi rapor/grafik olarak sunan bir ASP.NET Core
+web uygulaması. Okuma, arayüzdeki **"Sayaç Oku"** düğmesiyle kullanıcı istediğinde
+yapılır; istenirse (`PollingEnabled=true`) belirli aralıklarla otomatik de çalışabilir.
 
 Print server olmadığı için kullanıcı/IP bazlı "kim ne bastı" bilgisi alınamaz;
 takip edilen tek şey her yazıcının **toplam sayfa sayacı** (Printer-MIB
@@ -11,17 +12,28 @@ sayfa sayısını verir.
 
 ## Özellikler
 
-- **Arka plan toplayıcı** (`PrinterMonitorWorker`) – yapılandırılan aralıkta tüm
-  yazıcıları dolaşıp SNMP GET ile sayaç değerini okur, zaman damgasıyla kaydeder.
+- **"Sayaç Oku" sayfası** (`/Readings`, menüde "Sayaç Oku") – tek düğmeyle tüm
+  yazıcıların ya da tabloda seçilenlerin o anki sayacı paralel okunur. Her yazıcı
+  için marka/model (SNMP `sysDescr`, ilk okumada otomatik doldurulur), önceki
+  sayaç, son sayaç ve aradaki fark (önceki okumadan bu yana basılan sayfa) sürekli
+  tabloda durur; okuma sonrası sayfa PRG ile yenilenir.
+- **Arka plan toplayıcı** (`PrinterMonitorWorker`) – `PollingEnabled=true` ise
+  yapılandırılan aralıkta tüm yazıcıları dolaşıp sayaç değerini okur. Varsayılan
+  olarak **kapalıdır**; açılışta yalnızca veritabanı migration'ını çalıştırır.
 - **SNMP v2c / v1** – önce v2c (`public` community) denenir, başarısız olursa
   otomatik v1'e düşer (config'den kapatılabilir).
 - **Yazıcı yönetimi arayüzü** (`/Printers`, menüde "Yazıcılar") – yazıcı ekleme / yeniden adlandırma
   / silme; doğrudan veritabanına yazar, `appsettings.json` düzenlemek gerekmez.
-- **Günlük Özet raporu** (`/Report/Summary`) – tarih aralığı seçilir
-  (varsayılan son 30 gün), gün × yazıcı tablosu, günlük toplam bar grafik, özet
-  kartları (dönem toplamı / günlük ortalama / en yoğun gün), 7/30/90 gün
-  kısayolları, hafta sonu vurgusu. Aylık rapor için ayın 1'i → ay sonu aralığı
-  girilerek kullanılır.
+- **Hakedişler** (`/Hakedis`, menüde "Hakedişler") – Sayaç Oku'da yazıcı seçip
+  "Hakediş oluştur" ile sayfa-başı fatura belgesi üretilir: her yazıcı için
+  marka/model, önceki sayaç, şimdiki sayaç, fark. "Önceki sayaç" bir önceki
+  hakedişten gelir (fazladan okuma belgeyi bozmaz), ilk hakedişte elle düzeltilebilir.
+  Kaydedilen belge numaralanır, dondurulur; yazdırılabilir (PDF) ve CSV olarak indirilir.
+- **Rapor** (`/Report/Summary`, menüde "Rapor") – tarih aralığı seçilir (varsayılan:
+  içinde bulunulan ayın 1'inden bugüne; 7/30/90 gün kısayolları). Aralıktaki tek tek
+  okumalar en yeni önce listelenir; her satırda bir önceki okumaya göre fark
+  (`+N` / `0` / `–`). Ayrıca dönem toplamı, okuma sayısı ve yazıcı bazında dönem
+  toplamı gösterilir — aylık rapor doğrudan bu sayfadan alınır.
 - **SNMP Tanılama sayfası** (`/Diagnostics?ip=<ip>`) – bir yazıcıya GET/WALK yapıp
   `sysDescr`, `sysName`, bilinen sayfa-sayacı OID'leri ve `prtMarkerLifeCount`
   alt ağacını gösterir; marka tespiti yapıp doğru `PageCountOid`'i önerir. Yeni
@@ -75,8 +87,8 @@ dotnet run
 ```
 
 Uygulama açıldığında veritabanı migration'ları otomatik uygulanır
-(`yazicitakip.db` çalışma dizininde oluşur). Konsolda yazan
-`http://localhost:5xxx` adresini tarayıcıda aç.
+(`yazicitakip.db` çalışma dizininde oluşur); **sayaç okuması yapılmaz**. Konsolda
+yazan `http://localhost:5xxx` adresini tarayıcıda aç — açılış sayfası "Sayaç Oku".
 
 > Visual Studio ile: `YaziciTakip.csproj` açılıp F5 ile çalıştırılabilir.
 
@@ -96,7 +108,8 @@ ayarlanıp `dotnet run` çalıştırılır (yalnızca `PrintReadings` tablosu bo
 
 ```jsonc
 "PrinterMonitoring": {
-  "PollingIntervalMinutes": 1440,        // okuma sıklığı (dk)
+  "PollingEnabled": false,               // true ise arka planda periyodik okuma yapılır
+  "PollingIntervalMinutes": 1440,        // periyodik okuma açıksa okuma sıklığı (dk)
   "Snmp": {
     "Community": "public",
     "Version": "V2c",                    // V2c | V1

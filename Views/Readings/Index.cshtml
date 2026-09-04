@@ -1,0 +1,181 @@
+@using System.Globalization
+@model YaziciTakip.Models.ReadingsIndexViewModel
+@{
+    ViewData["Title"] = "Sayaç Oku";
+    var tr = new CultureInfo("tr-TR");
+    string Ago(DateTime? utc)
+    {
+        if (utc is null) return "okuma yok";
+        var span = DateTime.UtcNow - utc.Value;
+        if (span.TotalMinutes < 1) return "az önce";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} dk önce";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours} sa önce";
+        return $"{(int)span.TotalDays} gün önce";
+    }
+    string DtLocal(DateTime? utc)
+        => utc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm", tr) : "–";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div>
+        <h1 class="mb-1">Sayaç Oku</h1>
+        <div class="text-muted small">Tek düğmeyle tüm yazıcıların ya da yalnızca seçtiklerinin o anki sayacını al</div>
+    </div>
+    <a class="btn btn-outline-secondary btn-sm" asp-controller="Report" asp-action="Summary">Rapor</a>
+</div>
+
+@if (TempData["Success"] is string ok)
+{
+    <div class="alert alert-success">@ok</div>
+}
+@if (TempData["Warning"] is string warn)
+{
+    <div class="alert alert-warning">@warn</div>
+}
+@if (TempData["Error"] is string err)
+{
+    <div class="alert alert-danger">@err</div>
+}
+
+<div class="card mb-4">
+    <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-3">
+        <div>
+            <div><strong>@Model.PrinterCount</strong> kayıtlı yazıcı</div>
+            <div class="text-muted small">
+                Son okuma: @Ago(Model.LastReadingUtc)
+                @if (Model.LastReadingUtc is not null)
+                {
+                    <text>· @DtLocal(Model.LastReadingUtc)</text>
+                }
+            </div>
+        </div>
+        <form method="post" asp-action="ReadNow" class="m-0">
+            <button type="submit" class="btn btn-primary" @(Model.PrinterCount == 0 ? "disabled" : "")>
+                Tüm yazıcıları şimdi oku
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>Son okumalar</span>
+        <span class="d-flex align-items-center gap-3">
+            @if (Model.TotalDelta > 0)
+            {
+                <span class="text-muted small">Son iki okuma arası toplam <strong>@Model.TotalDelta.ToString("N0", tr)</strong> sayfa</span>
+            }
+            <button type="submit" form="selReadForm" class="btn btn-sm btn-primary"
+                    @(Model.Printers.Count == 0 ? "disabled" : "")>
+                Seçili yazıcıları oku
+            </button>
+            <button type="submit" form="selReadForm" formaction="@Url.Action("Create", "Hakedis")"
+                    class="btn btn-sm btn-outline-primary" @(Model.Printers.Count == 0 ? "disabled" : "")>
+                Hakediş oluştur
+            </button>
+        </span>
+    </div>
+    <div class="card-body p-0">
+        @if (Model.Printers.Count == 0)
+        {
+            <div class="p-4 text-center text-muted">
+                Henüz yazıcı eklenmemiş.
+                <a asp-controller="Printers" asp-action="Index">Yazıcılar</a> sayfasından ekleyin.
+            </div>
+        }
+        else
+        {
+            <form id="selReadForm" method="post" asp-action="ReadNow">
+                <input type="hidden" name="mode" value="selected" />
+                <div class="table-responsive" style="max-height:60vh;overflow-y:auto">
+                    <table class="table table-bordered table-hover align-middle mb-0">
+                        <thead style="position:sticky;top:0;z-index:2;background:#f8fafc">
+                            <tr>
+                                <th style="width:2.5rem" class="text-center">
+                                    <input type="checkbox" id="chkAll" class="form-check-input" title="Tümünü seç" />
+                                </th>
+                                <th>Yazıcı</th>
+                                <th>Marka / Model</th>
+                                <th>IP</th>
+                                <th class="text-end">Önceki sayaç</th>
+                                <th class="text-end">Son sayaç</th>
+                                <th class="text-end">Fark</th>
+                                <th>Önceki okuma</th>
+                                <th>Son okuma</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var p in Model.Printers)
+                        {
+                            <tr>
+                                <td class="text-center">
+                                    <input type="checkbox" name="printerIds" value="@p.PrinterId"
+                                           class="form-check-input chk-printer" />
+                                </td>
+                                <td class="fw-semibold">@p.PrinterName</td>
+                                <td class="text-muted small" style="max-width:16rem">
+                                    @if (string.IsNullOrWhiteSpace(p.Model))
+                                    {
+                                        <span class="text-muted">–</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="d-inline-block text-truncate" style="max-width:15rem" title="@p.Model">@p.Model</span>
+                                    }
+                                </td>
+                                <td class="text-muted"><code>@p.IpAddress</code></td>
+                                @if (!p.HasReading)
+                                {
+                                    <td colspan="5" class="text-muted">Henüz okunmadı — seçip “Seçili yazıcıları oku”ya ya da “Tüm yazıcıları şimdi oku”ya basın.</td>
+                                }
+                                else
+                                {
+                                    <td class="text-end">@(p.PreviousCounter?.ToString("N0", tr) ?? "–")</td>
+                                    <td class="text-end fw-semibold">@p.LatestCounter!.Value.ToString("N0", tr)</td>
+                                    <td class="text-end">
+                                        @if (p.PreviousCounter is null)
+                                        {
+                                            <span class="text-muted">ilk okuma</span>
+                                        }
+                                        else if (p.Delta is { } d)
+                                        {
+                                            <strong>@d.ToString("N0", tr)</strong>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-muted" title="Sayaç geriye gitmiş (sıfırlanmış olabilir)">–</span>
+                                        }
+                                    </td>
+                                    <td class="text-muted small">@DtLocal(p.PreviousReadingUtc)</td>
+                                    <td class="text-muted small">@DtLocal(p.LatestReadingUtc)</td>
+                                }
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </form>
+        }
+    </div>
+    <div class="card-footer text-muted small">
+        Okuma geçmişinin tamamı için <a asp-controller="Report" asp-action="Summary">Rapor</a> sayfasına bakın.
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            var all = document.getElementById('chkAll');
+            if (!all) return;
+            var boxes = document.querySelectorAll('.chk-printer');
+            all.addEventListener('change', function () {
+                boxes.forEach(function (b) { b.checked = all.checked; });
+            });
+            boxes.forEach(function (b) {
+                b.addEventListener('change', function () {
+                    all.checked = Array.prototype.every.call(boxes, function (x) { return x.checked; });
+                });
+            });
+        })();
+    </script>
+}

@@ -19,5 +19,12 @@ public class Printer
     [MaxLength(45)]
     public string IpAddress { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Yazıcının marka/model bilgisi (SNMP <c>sysDescr</c> — OID 1.3.6.1.2.1.1.1.0).
+    /// İlk başarılı "Sayaç Oku" sırasında otomatik doldurulur/güncellenir. Okunamazsa null.
+    /// </summary>
+    [MaxLength(250)]
+    public string? Model { get; set; }
+
     public ICollection<PrintReading> Readings { get; set; } = new List<PrintReading>();
 }

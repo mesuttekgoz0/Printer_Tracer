@@ -15,8 +15,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.Configure<PrinterMonitoringOptions>(
     builder.Configuration.GetSection(PrinterMonitoringOptions.SectionName));
 
+builder.Services.Configure<HakedisOptions>(
+    builder.Configuration.GetSection(HakedisOptions.SectionName));
+
 builder.Services.AddSingleton<ISnmpService, SnmpService>();
 builder.Services.AddScoped<SampleDataSeeder>();
+builder.Services.AddScoped<PrinterReadingService>();
 builder.Services.AddHostedService<PrinterMonitorWorker>();
 
 var app = builder.Build();
@@ -38,7 +42,7 @@ app.MapStaticAssets();
 
 app.MapControllerRoute(
     name: "default",
-    pattern: "{controller=Home}/{action=Index}/{id?}")
+    pattern: "{controller=Readings}/{action=Index}/{id?}")
     .WithStaticAssets();
 
 

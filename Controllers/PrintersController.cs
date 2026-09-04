@@ -3,26 +3,23 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using YaziciTakip.Data;
 using YaziciTakip.Models;
-using YaziciTakip.Services;
 
 namespace YaziciTakip.Controllers;
 
 /// <summary>
 /// Yazıcı listesini (Ad + IP) doğrudan arayüzden yönetmeye yarar.
-/// Buradan eklenen/silinen yazıcılar veritabanına yazılır; <c>PrinterMonitorWorker</c>
-/// bir sonraki okuma döngüsünde otomatik dikkate alır (uygulama yeniden başlatmaya gerek yok).
+/// Buradan eklenen/silinen yazıcılar yalnızca veritabanına yazılır; sayaç okuması
+/// yapılmaz — ilk okuma "Sayaç Oku" sayfasından elle alınır.
 /// appsettings.json'daki liste ise sadece açılışta bir kere DB ile eşitlenir (ekleme/güncelleme,
-/// silme yapmaz) — bu yüzden ikisi çakışmaz.
+/// silme yapmaz).
 /// </summary>
 public class PrintersController : Controller
 {
     private readonly AppDbContext _db;
-    private readonly ISnmpService _snmp;
 
-    public PrintersController(AppDbContext db, ISnmpService snmp)
+    public PrintersController(AppDbContext db)
     {
         _db = db;
-        _snmp = snmp;
     }
 
     public async Task<IActionResult> Index()
@@ -94,24 +91,7 @@ public class PrintersController : Controller
             return RedirectToAction(nameof(Index));
         }
 
-        // Kaydedilir edilmez bir kez SNMP okuması yap; başarılıysa ilk kaydı oluştur.
-        var pageCount = await _snmp.GetPageCountAsync(printer.IpAddress, HttpContext.RequestAborted);
-        if (pageCount is not null)
-        {
-            _db.PrintReadings.Add(new PrintReading
-            {
-                PrinterId = printer.Id,
-                PageCount = pageCount.Value,
-                TimestampUtc = DateTime.UtcNow,
-            });
-            await _db.SaveChangesAsync();
-            TempData["Success"] = $"{name} ({ipAddress}) eklendi. İlk okuma yapıldı: sayaç = {pageCount.Value}.";
-        }
-        else
-        {
-            TempData["Success"] = $"{name} ({ipAddress}) eklendi, ancak ilk SNMP okuması yapılamadı (yazıcıya ulaşılamadı). Bir sonraki okuma döngüsünde tekrar denenecek.";
-        }
-
+        TempData["Success"] = $"{name} ({ipAddress}) eklendi. İlk sayaç değeri için “Sayaç Oku” sayfasından okuma alın.";
         return RedirectToAction(nameof(Index));
     }
 

@@ -42,6 +42,45 @@ public class SnmpService : ISnmpService
         return value;
     }
 
+    public async Task<string?> GetModelAsync(string ipAddress, CancellationToken cancellationToken = default)
+    {
+        if (!IPAddress.TryParse(ipAddress, out var ip))
+            return null;
+
+        var endpoint = new IPEndPoint(ip, _options.Port);
+        var community = new OctetString(_options.Community);
+
+        // Config'deki sürümü önce dene, sonra diğerini (v1/v2c fallback).
+        var primary = ParseVersion(_options.Version);
+        var order = primary == VersionCode.V1
+            ? new[] { VersionCode.V1, VersionCode.V2 }
+            : new[] { VersionCode.V2, VersionCode.V1 };
+
+        foreach (var version in order)
+        {
+            var value = (await GetSingleAsync(version, endpoint, community, SysDescrOid, cancellationToken))?.Value;
+            var cleaned = CleanModel(value);
+            if (cleaned is not null)
+                return cleaned;
+        }
+
+        return null;
+    }
+
+    /// <summary>sysDescr'i tek satıra indirger, fazla boşlukları temizler, en fazla 250 karaktere kısaltır.</summary>
+    private static string? CleanModel(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var oneLine = string.Join(' ', raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        oneLine = oneLine.Trim();
+        if (oneLine.Length == 0)
+            return null;
+
+        return oneLine.Length > 250 ? oneLine[..250] : oneLine;
+    }
+
     private async Task<long?> TryGetAsync(
         VersionCode version, IPEndPoint endpoint, string ipAddress, CancellationToken cancellationToken)
     {
