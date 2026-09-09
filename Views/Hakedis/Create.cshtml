@@ -4,15 +4,23 @@
     ViewData["Title"] = "Hakediş Oluştur";
     var tr = new CultureInfo("tr-TR");
     string N(long v) => v.ToString("N0", tr);
+    string Para(decimal v) => v.ToString("#,##0.00", tr);
+    string Fiyat(decimal v) => v.ToString("#,##0.####", tr);
     string Dt(DateTime? utc) => utc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm", tr) : "–";
 }
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <div>
         <h1 class="mb-1">Hakediş Oluştur</h1>
-        <div class="text-muted small">Değerleri kontrol edip gerekiyorsa düzeltin, sonra kaydedin. Kaydedilince numara verilir ve değerler dondurulur.</div>
+        <div class="text-muted small">
+            Tedarikçi: <strong>@Model.TedarikciAd</strong>
+            @if (Model.FiyatListesiBilgi is not null)
+            {
+                <span>· Fiyat listesi: <strong>@Model.FiyatListesiBilgi</strong></span>
+            }
+        </div>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" asp-controller="Readings" asp-action="Index">Vazgeç</a>
+    <a class="btn btn-outline-secondary btn-sm" asp-action="New">Vazgeç</a>
 </div>
 
 @if (Model.Skipped.Count > 0)
@@ -23,7 +31,22 @@
     </div>
 }
 
+@if (Model.Warnings.Count > 0)
+{
+    <div class="alert alert-warning">
+        <ul class="mb-0">
+            @foreach (var w in Model.Warnings)
+            {
+                <li>@w</li>
+            }
+        </ul>
+    </div>
+}
+
 <form method="post" asp-action="Save">
+    <input type="hidden" name="TedarikciId" value="@Model.TedarikciId" />
+    <input type="hidden" name="TedarikciAd" value="@Model.TedarikciAd" />
+
     <div class="card mb-3">
         <div class="card-body row g-3">
             <div class="col-sm-3">
@@ -37,9 +60,9 @@
                        value="@Model.PeriodEnd.ToString("yyyy-MM-dd")" />
             </div>
             <div class="col-sm-6">
-                <label class="form-label" for="Note">Açıklama (dönem adı, sözleşme no, firma…)</label>
+                <label class="form-label" for="Note">Açıklama (dönem adı, sözleşme no…)</label>
                 <input type="text" class="form-control" id="Note" name="Note" maxlength="500"
-                       placeholder="ör. Ocak 2026 – Olivetti servis hakedişi" />
+                       placeholder="ör. Ocak 2026 – @Model.TedarikciAd hakedişi" />
             </div>
         </div>
     </div>
@@ -54,16 +77,19 @@
                             <th style="width:2.5rem" class="text-end">#</th>
                             <th>Yazıcı</th>
                             <th>Marka / Model</th>
-                            <th class="text-end" style="width:10rem">Önceki sayaç</th>
-                            <th class="text-end" style="width:10rem">Şimdiki sayaç</th>
-                            <th class="text-end" style="width:8rem">Fark</th>
+                            <th>Tür</th>
+                            <th class="text-end" style="width:9rem">Önceki sayaç</th>
+                            <th class="text-end" style="width:9rem">Şimdiki sayaç</th>
+                            <th class="text-end" style="width:7rem">Fark</th>
+                            <th class="text-end" style="width:8rem">Sayfa başı ₺</th>
+                            <th class="text-end" style="width:9rem">Tutar ₺</th>
                         </tr>
                     </thead>
                     <tbody>
                     @for (var i = 0; i < Model.Rows.Count; i++)
                     {
                         var r = Model.Rows[i];
-                        <tr>
+                        <tr data-unit="@r.UnitPriceInvariant">
                             <td class="text-end text-muted">@(i + 1)</td>
                             <td class="fw-semibold">
                                 @r.PrinterName
@@ -81,6 +107,13 @@
                                 <input type="hidden" name="Rows[@i].Model" value="@r.Model" />
                             </td>
                             <td>
+                                <span class="badge text-bg-light border">@r.TurAd</span>
+                                @if (r.TurId is int rtid)
+                                {
+                                    <input type="hidden" name="Rows[@i].TurId" value="@rtid" />
+                                }
+                            </td>
+                            <td>
                                 <input type="number" class="form-control form-control-sm text-end js-prev"
                                        name="Rows[@i].PreviousCounter" value="@r.PreviousCounter" step="1" />
                                 <div class="form-text text-end">@Dt(r.PreviousReadingUtc)</div>
@@ -91,20 +124,27 @@
                                 <div class="form-text text-end">@Dt(r.CurrentReadingUtc)</div>
                             </td>
                             <td class="text-end fw-bold js-diff">@(r.Pages is { } p ? N(p) : "?")</td>
+                            <td class="text-end">
+                                @Fiyat(r.UnitPrice)
+                                <input type="hidden" name="Rows[@i].UnitPrice" value="@r.UnitPriceInvariant" />
+                            </td>
+                            <td class="text-end fw-bold js-amount">@Para(r.Amount)</td>
                         </tr>
                     }
                     </tbody>
                     <tfoot>
                         <tr style="background:#f8fafc">
-                            <th colspan="5" class="text-end">Toplam</th>
-                            <th class="text-end js-total">@N(Model.Rows.Sum(x => x.Pages ?? 0))</th>
+                            <th colspan="6" class="text-end">Toplam</th>
+                            <th class="text-end js-total-pages">@N(Model.Rows.Sum(x => x.Pages ?? 0))</th>
+                            <th></th>
+                            <th class="text-end js-total-amount">@Para(Model.TotalAmount)</th>
                         </tr>
                     </tfoot>
                 </table>
             </div>
         </div>
         <div class="card-footer d-flex justify-content-end gap-2">
-            <a class="btn btn-outline-secondary" asp-controller="Readings" asp-action="Index">Vazgeç</a>
+            <a class="btn btn-outline-secondary" asp-action="New">Vazgeç</a>
             <button type="submit" class="btn btn-primary">Hakedişi kaydet</button>
         </div>
     </div>
@@ -113,21 +153,33 @@
 @section Scripts {
     <script>
         (function () {
-            function fmt(n) { return n.toLocaleString('tr-TR'); }
+            var tl = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            function fmtInt(n) { return n.toLocaleString('tr-TR'); }
             function recalc() {
-                var total = 0;
+                var totalPages = 0, totalAmount = 0;
                 document.querySelectorAll('tbody tr').forEach(function (tr) {
                     var prev = parseInt(tr.querySelector('.js-prev')?.value || '0', 10);
                     var cur = parseInt(tr.querySelector('.js-cur')?.value || '0', 10);
-                    var cell = tr.querySelector('.js-diff');
-                    if (!cell) return;
-                    if (isNaN(prev) || isNaN(cur) || cur < prev) { cell.textContent = '?'; return; }
+                    var unit = parseFloat(tr.getAttribute('data-unit') || '0');
+                    var diffCell = tr.querySelector('.js-diff');
+                    var amtCell = tr.querySelector('.js-amount');
+                    if (!diffCell) return;
+                    if (isNaN(prev) || isNaN(cur) || cur < prev) {
+                        diffCell.textContent = '?';
+                        if (amtCell) amtCell.textContent = tl.format(0);
+                        return;
+                    }
                     var d = cur - prev;
-                    cell.textContent = fmt(d);
-                    total += d;
+                    diffCell.textContent = fmtInt(d);
+                    var amt = d * unit;
+                    if (amtCell) amtCell.textContent = tl.format(amt);
+                    totalPages += d;
+                    totalAmount += amt;
                 });
-                var t = document.querySelector('.js-total');
-                if (t) t.textContent = fmt(total);
+                var tp = document.querySelector('.js-total-pages');
+                if (tp) tp.textContent = fmtInt(totalPages);
+                var ta = document.querySelector('.js-total-amount');
+                if (ta) ta.textContent = tl.format(totalAmount);
             }
             document.querySelectorAll('.js-prev, .js-cur').forEach(function (el) {
                 el.addEventListener('input', recalc);

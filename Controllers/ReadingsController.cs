@@ -65,6 +65,7 @@ public class ReadingsController : Controller
     private async Task<ReadingsIndexViewModel> BuildAsync()
     {
         var printers = await _db.Printers.AsNoTracking()
+            .Include(p => p.Tur)
             .OrderBy(p => p.Name)
             .ToListAsync();
 
@@ -88,6 +89,8 @@ public class ReadingsController : Controller
                 PrinterName = printer.Name,
                 IpAddress = printer.IpAddress,
                 Model = printer.Model,
+                TurId = printer.TurId,
+                TurAd = printer.TurAdi,
                 ReadingCount = count,
             };
 

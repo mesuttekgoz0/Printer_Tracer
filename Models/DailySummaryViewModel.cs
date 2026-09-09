@@ -26,8 +26,6 @@ public class DailySummaryViewModel
 
     /// <summary>true ise tüm okumalar listeleniyor; false ise yalnızca en son birkaçı.</summary>
     public bool ShowAllReadings { get; set; }
-
-    public int DayCount => To.DayNumber - From.DayNumber + 1;
 }
 
 /// <summary>"Okumalar" listesinde tek bir SNMP okuması.</summary>

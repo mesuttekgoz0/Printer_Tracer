@@ -1,5 +1,5 @@
 @using System.Globalization
-@model List<YaziciTakip.Controllers.PrinterListRow>
+@model YaziciTakip.Controllers.PrintersIndexViewModel
 @{
     ViewData["Title"] = "Yazıcılar";
     var tr = new CultureInfo("tr-TR");
@@ -32,6 +32,26 @@
                 <input type="text" id="ipAddress" name="ipAddress" class="form-control" placeholder="192.168.1.51" required style="min-width:12rem" />
             </div>
             <div class="col-auto">
+                <label for="turId" class="form-label">Tür</label>
+                <select id="turId" name="turId" class="form-select">
+                    <option value="">Belirtilmemiş</option>
+                    @foreach (var tur in Model.Types)
+                    {
+                        <option value="@tur.Id">@tur.Ad</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
+                <label for="tedarikciId" class="form-label">Tedarikçi</label>
+                <select id="tedarikciId" name="tedarikciId" class="form-select">
+                    <option value="">—</option>
+                    @foreach (var s in Model.Suppliers)
+                    {
+                        <option value="@s.Id">@s.Ad</option>
+                    }
+                </select>
+            </div>
+            <div class="col-auto">
                 <button type="submit" class="btn btn-primary">Ekle</button>
             </div>
         </form>
@@ -53,6 +73,8 @@
                     <tr>
                         <th>Ad</th>
                         <th>IP adresi</th>
+                        <th>Tür</th>
+                        <th>Tedarikçi</th>
                         <th class="text-end">Okuma sayısı</th>
                         <th>Son okuma</th>
                         <th class="text-end">Son sayaç</th>
@@ -60,11 +82,11 @@
                     </tr>
                 </thead>
                 <tbody>
-                @if (Model.Count == 0)
+                @if (Model.Printers.Count == 0)
                 {
-                    <tr><td colspan="6" class="p-4 text-center text-muted">Henüz kayıtlı yazıcı yok. Yukarıdaki formdan ekleyebilirsiniz.</td></tr>
+                    <tr><td colspan="8" class="p-4 text-center text-muted">Henüz kayıtlı yazıcı yok. Yukarıdaki formdan ekleyebilirsiniz.</td></tr>
                 }
-                @foreach (var p in Model)
+                @foreach (var p in Model.Printers)
                 {
                     <tr>
                         <td>
@@ -74,6 +96,30 @@
                             </form>
                         </td>
                         <td class="text-muted"><code>@p.IpAddress</code></td>
+                        <td>
+                            <form method="post" asp-controller="Printers" asp-action="SetType" asp-route-id="@p.Id">
+                                <select name="turId" class="form-select form-select-sm" style="min-width:8.5rem"
+                                        onchange="this.form.submit()" title="Yazıcı türünü değiştir">
+                                    <option value="" selected="@(p.TurId is null)">Belirtilmemiş</option>
+                                    @foreach (var tur in Model.Types)
+                                    {
+                                        <option value="@tur.Id" selected="@(p.TurId == tur.Id)">@tur.Ad</option>
+                                    }
+                                </select>
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" asp-controller="Printers" asp-action="SetSupplier" asp-route-id="@p.Id">
+                                <select name="tedarikciId" class="form-select form-select-sm" style="min-width:10rem"
+                                        onchange="this.form.submit()" title="Tedarikçi ata">
+                                    <option value="" selected="@(p.TedarikciId is null)">—</option>
+                                    @foreach (var s in Model.Suppliers)
+                                    {
+                                        <option value="@s.Id" selected="@(p.TedarikciId == s.Id)">@s.Ad</option>
+                                    }
+                                </select>
+                            </form>
+                        </td>
                         <td class="text-end">@p.ReadingCount.ToString("N0", tr)</td>
                         <td class="text-muted small">@(p.LatestReadingUtc is { } t ? t.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "–")</td>
                         <td class="text-end">@(p.LatestCounter is { } c ? c.ToString("N0", tr) : "–")</td>

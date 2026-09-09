@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace YaziciTakip.Models;
 
@@ -28,9 +29,19 @@ public class Hakedis
     [MaxLength(500)]
     public string? Note { get; set; }
 
+    /// <summary>Hakedişin ait olduğu tedarikçi (silinmiş olabilir; ad aşağıda kopyalanır).</summary>
+    public int? TedarikciId { get; set; }
+
+    /// <summary>Tedarikçi adı, belge oluşturulduğu anki haliyle donduruldu. Belge başlığında gösterilir.</summary>
+    [MaxLength(150)]
+    public string? TedarikciAd { get; set; }
+
     public List<HakedisLine> Lines { get; set; } = new();
 
     public long TotalPages => Lines.Sum(l => l.Pages ?? 0);
+
+    /// <summary>Tüm satırların tutar toplamı.</summary>
+    public decimal TotalAmount => Lines.Sum(l => l.Amount);
 }
 
 /// <summary>Hakediş belgesinde tek bir yazıcının satırı. Yazıcı adı/modeli o anki haliyle kopyalanır.</summary>
@@ -52,10 +63,25 @@ public class HakedisLine
     [MaxLength(250)]
     public string? Model { get; set; }
 
+    /// <summary>Yazıcının tür id'si, belge oluşturulduğu anki haliyle donduruldu (FK değil — snapshot).</summary>
+    public int? TurId { get; set; }
+
+    /// <summary>Tür adı, belge oluşturulduğu anki haliyle donduruldu. Belgede bu gösterilir.</summary>
+    [MaxLength(50)]
+    public string? TurAd { get; set; }
+
     public long PreviousCounter { get; set; }
 
     public long CurrentCounter { get; set; }
 
     /// <summary>Basılan sayfa = CurrentCounter - PreviousCounter. Sayaç geriye gittiyse null.</summary>
     public long? Pages { get; set; }
+
+    /// <summary>Fiyat listesinden çekilen sayfa-başı fiyat, donduruldu.</summary>
+    [Column(TypeName = "decimal(18,4)")]
+    public decimal UnitPrice { get; set; }
+
+    /// <summary>Tutar = Pages × UnitPrice, donduruldu.</summary>
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal Amount { get; set; }
 }

@@ -69,10 +69,6 @@
                     @(Model.Printers.Count == 0 ? "disabled" : "")>
                 Seçili yazıcıları oku
             </button>
-            <button type="submit" form="selReadForm" formaction="@Url.Action("Create", "Hakedis")"
-                    class="btn btn-sm btn-outline-primary" @(Model.Printers.Count == 0 ? "disabled" : "")>
-                Hakediş oluştur
-            </button>
         </span>
     </div>
     <div class="card-body p-0">
@@ -96,6 +92,7 @@
                                 </th>
                                 <th>Yazıcı</th>
                                 <th>Marka / Model</th>
+                                <th>Tür</th>
                                 <th>IP</th>
                                 <th class="text-end">Önceki sayaç</th>
                                 <th class="text-end">Son sayaç</th>
@@ -121,6 +118,16 @@
                                     else
                                     {
                                         <span class="d-inline-block text-truncate" style="max-width:15rem" title="@p.Model">@p.Model</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (p.TurId is null)
+                                    {
+                                        <span class="text-muted">–</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge text-bg-light border">@p.TurAd</span>
                                     }
                                 </td>
                                 <td class="text-muted"><code>@p.IpAddress</code></td>

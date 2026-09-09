@@ -163,6 +163,86 @@ YaziciTakip/
 - Test (gerçek 4 yazıcı): seçili → Create (4 satır, hepsi "ilk hakediş") → Save (`2026-0001`, dönem 01–04.09, toplam 266) → Details + `/Hakedis/Csv/2` doğrulandı; TR karakterler (`İ`) DB'de doğru (UTF-8), CSV'de `;` içeren model alanı tırnaklanıyor. Test kayıtları sonra temizlendi.
 - Henüz yok: hakediş silme/düzenleme action'ı (liste sadece Aç), PDF'i tarayıcının "PDF kaydet"ine bırakıyoruz.
 
+### Not (2026-09-07) — Ölü kod / şablon artığı temizliği
+- Silinen dosyalar: `Views/Shared/_ValidationScriptsPartial.cshtml` (hiçbir view render etmiyordu), `wwwroot/lib/jquery-validation/` + `wwwroot/lib/jquery-validation-unobtrusive/` (yalnız o partial kullanıyordu; formların hepsi ya `method="get"` ya da unobtrusive validation'sız düz POST), `Views/Shared/_Layout.cshtml.css` (ASP.NET şablonundan kalan `.box-shadow`/`.nav-pills`/`accept-policy` vb. stiller — gerçek tema `wwwroot/css/site.css`'te), `Views/Home/Privacy.cshtml` (şablon "gizlilik politikası" placeholder sayfası; intranet aracına gereksiz).
+- `HomeController`: `Privacy()` action'ı kaldırıldı; sadece `Error()` kaldı (`UseExceptionHandler("/Home/Error")` hâlâ kullanıyor).
+- `_Layout.cshtml`: footer'daki "Gizlilik" linki ve `~/YaziciTakip.styles.css` `<link>`'i (artık hiç `*.cshtml.css` yok) kaldırıldı.
+- Kullanılmayan view-model üyeleri silindi: `ManualReadRow.IsFirstReading`, `DailySummaryViewModel.DayCount`, `ReadingsIndexViewModel.HasAnyReading` (satır tipindeki `HasReading` kullanılıyor, o kaldı).
+- Build sonrası: 0 uyarı / 0 hata. `SampleDataSeeder` ve `PrinterMonitorWorker` (açılış migration'ı yaptığı için) bilerek bırakıldı.
+
+### Not (2026-09-09) — Yazıcı türü (siyah-beyaz / renkli) alanı
+- `Printer.ColorType` (`PrinterColorType` enum: `Unspecified=0` / `Monochrome=1` / `Color=2`, `Models/Printer.cs` içinde + `ToDisplayText()` uzantısı → "Belirtilmemiş" / "Siyah-Beyaz" / "Renkli"). **Elle** belirlenir, SNMP'den okunmaz (kullanıcı kararı: renk tespiti markaya göre tutarsız).
+- Migration: `Data/Migrations/20260909055839_AddPrinterColorType` — `ColorType INTEGER NOT NULL DEFAULT 0`. Mevcut 4 yazıcı 0 (Belirtilmemiş) oldu. Worker açılışta `MigrateAsync` ile uygular; dev DB'ye `dotnet ef database update` ile de uygulandı.
+- `PrintersController`: `Create(... PrinterColorType colorType)` ekleme formundan alır; yeni `SetType(int id, PrinterColorType colorType)` [POST, PRG] satır içi `<select onchange="this.form.submit()">` ile türü değiştirir. `PrinterListRow.ColorType` eklendi.
+- `Views/Printers/Index.cshtml`: "Yeni yazıcı ekle" formuna Tür `<select>`'i, tabloya "Tür" sütunu (satır içi auto-submit select). Boş-durum `colspan` 6→7.
+- `ReadingsController.BuildAsync` → `PrinterReadingStatus.ColorType`; `Views/Readings/Index.cshtml` "Son okumalar" tablosunda "Marka / Model"den sonra "Tür" sütunu (badge; Unspecified'da "–").
+- Smoke test (dev, 4 gerçek yazıcı): `/Printers` + `/Readings` 200; `SetType/1 → colorType=2` → 302, DB'de `ColorType=2`, Readings'te "Renkli" badge.
+- (2026-09-09) Kullanıcı isteğiyle mevcut 4 yazıcıya rastgele tür atandı: IT=Renkli, Elektrik Sİstemleri=Siyah-Beyaz, İK=Renkli, Muhasebe=Siyah-Beyaz.
+
+### Not (2026-09-09) — Tedarikçi + Fiyat Listesi + tedarikçi-bazlı hakediş
+- **Yeni tablolar** (`Data/Migrations/20260909062532_AddTedarikciAndPricing`):
+  - `Tedarikci` (Id, Ad, Not). `Models/Tedarikci.cs`.
+  - `FiyatListesi` (Id, ListeAdi, Tarih `DateOnly`, TedarikciId) + `FiyatSatiri` (Id, FiyatListesiId, ColorType, SayfaBasiFiyat `decimal(18,4)`). Header + tür başına bir satır. `Models/FiyatListesi.cs`; `FiyatListesi.FiyatBul(tur)` yardımcı.
+  - `Printer.TedarikciId` (nullable FK, `OnDelete SetNull`). `Hakedis.TedarikciId` + `TedarikciAd` (donmuş kopya). `HakedisLine.ColorType` + `UnitPrice decimal(18,4)` + `Amount decimal(18,2)` (hepsi donmuş).
+  - `AppDbContext`: `Tedarikciler`, `FiyatListeleri`, `FiyatSatirlari` DbSet'leri; FiyatListesi→Tedarikci ve FiyatSatiri→FiyatListesi cascade; `IX_FiyatListeleri (TedarikciId, Tarih)`.
+- **Fiyat listesi seçimi**: tedarikçinin `Tarih <= dönem bitişi` olan en güncel listesi; öyle liste yoksa en erken listesi (`HakedisController.ResolvePriceListAsync`). Eski hakedişler kendi fiyatını korur (satıra kopya).
+- **`TedarikciController`** (yeni, nav'da "Tedarikçiler"): `Index` (liste + ekle), `Details` (bilgi düzenle + bağlı yazıcılar + fiyat listeleri + "yeni fiyat listesi" formu: Siyah-Beyaz/Renkli ₺/sayfa), `Create`/`Edit`/`Delete`, `AddPriceList`/`DeletePriceList`. Fiyat metni kültürden bağımsız çözülür (`ParsePrice`: "0,15" ve "0.15" kabul, `internal static` — `HakedisController` de kullanıyor).
+- **Yazıcı–tedarikçi**: `PrintersController.SetSupplier(id, tedarikciId?)` [POST, PRG]; Yazıcılar tablosunda "Tür"den sonra "Tedarikçi" auto-submit `<select>` sütunu + ekleme formunda. `PrintersController.Index` artık `PrintersIndexViewModel { Printers, Suppliers }` döndürüyor (view `@model` değişti). `Create` opsiyonel `tedarikciId` alıyor.
+- **Hakediş akışı değişti** (yazıcı seçimi kalktı, tedarikçi seçimi geldi):
+  - `HakedisController.Create(int[] printerIds)` → **`Create(int tedarikciId)`**. Önce `New()` [GET] = tedarikçi seçme ekranı (`Views/Hakedis/New.cshtml`, `TedarikciSecRow`), yazıcısı olmayan tedarikçi seçilemez.
+  - `Create`: tedarikçinin TÜM yazıcıları için satır üretir; okuması olmayan → `Skipped`; tür `Unspecified` ya da fiyat 0 → `Warnings`. `HakedisCreateViewModel`'e `TedarikciId/Ad`, `FiyatListesiBilgi`, `Warnings`, `TotalAmount`; `HakedisCreateRow`'a `ColorType`, `UnitPrice`, `Amount`, `UnitPriceInvariant` (gizli alan için nokta-ondalık).
+  - `Views/Hakedis/Create.cshtml`: başlıkta tedarikçi + fiyat listesi; tabloya Tür / Sayfa başı ₺ / Tutar sütunları; JS canlı hesap tutarı da günceller (`data-unit` satır özniteliğinden). Gizli `TedarikciId`, satır başına `ColorType` + `UnitPrice` (invariant).
+  - `Save`: `HakedisSaveModel`'e `TedarikciId/Ad`, `HakedisSaveRow`'a `ColorType` + `UnitPrice` (string, `ParsePrice`). Tutar sunucuda yeniden hesaplanır (`Round(pages*unit, 2)`), tedarikçi adı güncel kayıttan dondurulur.
+  - `Details.cshtml`: üstte "Tedarikçi" bloğu; tabloya Tür / Sayfa Başı ₺ / Tutar + TOPLAM tutar. `Csv`: Tedarikçi satırı + Tür/Fiyat/Tutar sütunları + toplam tutar.
+  - `Index.cshtml`: "Sayaç Oku"dan gelen "Hakediş oluştur" düğmesi **kaldırıldı**; yerine Hakedişler sayfasında "+ Yeni hakediş" (→ `New`). Listeye Tedarikçi + Toplam tutar sütunları.
+- **`Views/Readings/Index.cshtml`**: "Hakediş oluştur" düğmesi kaldırıldı (checkbox'lar "Seçili yazıcıları oku" için duruyor).
+- Para birimi: ₺; birim fiyat 4 haneye kadar, tutar 2 hane, tr-TR. Ondalık bind sorununu önlemek için fiyatlar POST'ta string alınıp invariant çözülüyor.
+- Smoke test (dev): tedarikçi + fiyat listesi (Mono 0,15 / Renkli 0,75) oluştur → 2 yazıcı (IT, İK; ikisi Renkli) ata → `New` → `Create` (2 satır, birim 0,75) → `Save` (`2026-0003`, IT 499×0,75=374,25 + İK 60×0,75=45,00 = 419,25 ₺) → Details + CSV doğrulandı; TR karakter (`İ`) UTF-8 doğru. Tüm test kayıtları sonra silindi (tedarikçi/liste/hakediş), yazıcı tür atamaları korundu.
+### Not (2026-09-09) — Eksik giderme (fiyat listesi düzenleme + hakediş silme + belge sadeleştirme)
+- **Fiyat listesi düzenleme**: `TedarikciController.EditPriceList(id, listeAdi, tarih?, fiyatMono?, fiyatColor?)` [POST]. Satır yoksa oluşturur, varsa günceller (`SetPrice` yerel fonksiyonu). `Views/Tedarikci/Details.cshtml`'deki fiyat listesi tablosu artık satır içi düzenlenebilir: her satır boş `<form id="pl-{id}">` + `form="pl-{id}"` ile bağlı input'lar (Printers rename / Readings selReadForm ile aynı desen). Input değerleri invariant (`0.15`), `ParsePrice` virgül/nokta kabul ediyor.
+- **Hakediş silme**: `HakedisController.Delete(id)` [POST] — `Hakedis` sil (satırlar cascade). Silinince o yazıcıların bir sonraki hakedişi "önceki sayaç"ı bir önceki hakedişten alır (silme temiz geri alınır). "Sil" düğmesi: `Views/Hakedis/Index.cshtml` satır sonu + `Details.cshtml` üst araç çubuğu, ikisi de `confirm()`.
+- **Belge sadeleştirme**: `Views/Hakedis/Details.cshtml` — hakedişin `TedarikciAd`'ı varsa `appsettings.json`'daki `Hakedis:ToCompany` ("Gönderilen" firma) satırı gösterilmez (tedarikçi zaten alıcı). `FromCompany` ("Düzenleyen") aynen duruyor.
+- Kullanıcı isteğiyle **bırakılanlar**: dev DB'deki eski 2 tedarikçisiz/0-tutar hakediş kaydı (takım liderine gösterilecek).
+- Smoke test (dev): EditPriceList (ad+tarih+iki fiyat, "0.12" ve "0,66" kabul), Tedarikci Delete (fiyat listeleri cascade), Hakedis Delete (satırlar cascade, 302→Index), Details'te "Gönderilen" gizli + tek "Tedarikçi" bloğu doğrulandı. Test kayıtları silindi, orijinal 2 hakediş korundu.
+- Henüz yok: hakediş **düzenleme** (tasarım gereği donmuş; sadece sil), tedarikçi bazlı rapor. Arayüz güzelleştirmesi kullanıcıyla sonraki adımda yapılacak.
+
+### Not (2026-09-09) — Tür artık ayrı tablo (`Tur`) + FK; ID'ler yazıcı listesinde görünüyor
+- **`PrinterColorType` enum kaldırıldı**, yerine **`Tur` tablosu** (`Models/Tur.cs`): `Id`, `Ad`. Açılışta `HasData` ile seed: `1 = Siyah-Beyaz`, `2 = Renkli` (eski enum değerleriyle birebir aynı → veri korundu). CRUD yok (sabit lookup); `Tur.Belirtilmemis` sabiti null tür için gösterim metni.
+- FK'ler: `Printer.TurId` (nullable, `SetNull`), `FiyatSatiri.TurId` (zorunlu, `Restrict`). `Printer.TedarikciId` FK zaten vardı (`SetNull`) — değişmedi. `HakedisLine`: `ColorType` → `TurId` (nullable, FK **değil** — donmuş snapshot) + `TurAd` (donmuş string, belgede bu gösterilir).
+- Migration `20260909081205_AddTurTable` — **elle düzenlendi**: `AddColumn TurId` → `Sql("UPDATE Printers SET TurId = ColorType WHERE ColorType IN (1,2)")` → `DropColumn ColorType` sırası korunarak yazıcı türleri kaybolmadan taşındı. HakedisLines için de ColorType→TurId/TurAd backfill Sql'i eklendi. (EF "table rebuild pending" uyarısı verdi ama sonuç doğru: `dotnet ef database update` sonrası IT=2, İK=2, Elektrik=1, Muhasebe=1.)
+- `FiyatListesi.FiyatBul(PrinterColorType)` → `FiyatBul(int turId)`. `TedarikciController.AddPriceList`/`EditPriceList` artık sabit `fiyatMono`/`fiyatColor` yerine paralel `int[] turId` + `string[] fiyat` dizileri alıyor; `Views/Tedarikci/Details.cshtml` `@model` → `TedarikciDetailsViewModel { Tedarikci, List<Tur> Turler }`, fiyat form/tablo sütunları `Turler` üzerinde döngüyle üretiliyor.
+- `Views/Printers/Index.cshtml`: tür `<select>`'i `Model.Types` (Tur listesi) üzerinden. `SetType(int id, int? turId)`, `Create(... int? turId, int? tedarikciId)`. (Not: kısa süre "TurId: N" / "TedarikciId: N" metni eklenmişti, kullanıcı istemedi — FK sadece DB tarafında, arayüzde id gösterilmiyor; geri alındı.)
+- Diğer view/VM: `PrinterReadingStatus`/`HakedisCreateRow`/`HakedisSaveRow` `ColorType` → `TurId` (+ `TurAd`). `Views/{Readings,Hakedis/Create,Hakedis/Details}` güncellendi.
+- Smoke test (dev): migration veri koruması doğrulandı; Printers/Readings/Tedarikci/Hakedis sayfaları 200; dinamik fiyat formu (`turId=1 fiyat=0,20`, `turId=2 fiyat=1,00`) → FiyatSatiri FK'li kaydedildi; hakediş Create satır başına doğru `TurId`/`UnitPrice` + toplam. FK integrity check temiz.
+
+### Not (2026-09-09) — "Classical" görünüme geçiş (tasarım referansı: masaüstü "Printer Tracing Website")
+- Kullanıcı masaüstündeki `Printer Tracing Website/` klasörünü (Claude Design export: `classical.css` + `.dc.html`'ler) referans verdi; "şu anki halini bozma, sadece tasarımı ona benzet, tedarikçiler/hakediş gibi eksik sekmeleri sen uydur" dedi.
+- **Sadece CSS + layout `<head>` değişti; controller/model/view mantığı ELLENMEDİ.** Bootstrap korunuyor (grid + collapse navbar için); `wwwroot/css/site.css` tamamen yeniden yazıldı: Classical token'ları (`--color-bg #f3f2f2`, `--color-text #201f1d`, tek altın vurgu `--color-accent #b68235`, `--font-heading` Cormorant Garamond, `--font-body` Lora, `--space-*`, `--radius-*`) + Bootstrap görsel katmanını ezme.
+- `_Layout.cshtml`: Google Fonts `<link>` (Cormorant Garamond + Lora) eklendi. Markup değişmedi.
+- Uygulanan Classical kuralları: koyu lacivert tema → sıcak beyaz zemin; dolu butonlar → **altın konturlu** (`.btn-primary` artık outline); kartlar şeffaf + ince çizgi kenar, gölge yok; tablo başlıkları küçük harf-aralıklı uppercase, sadece satır çizgileri; navbar açık zemin + alt hairline, aktif sekmede altın alt-çizgi; `.alert` kutuları dolu değil kontur+hafif ton; `.badge` küçük tag; footer artık `static` (eski `position:absolute` + `body margin-bottom` kaldırıldı).
+- Eksik sekmeler (Tedarikçiler, Hakedişler, Rapor, SNMP Tanılama) referansta yoktu → aynı token/sınıflarla otomatik aynı görünüme oturuyorlar (hepsi Bootstrap `.card`/`.table`/`.btn` kullanıyor).
+- Build temiz. Tarayıcı eklentisi bağlı olmadığı için görsel doğrulama yapılamadı; tüm sayfalar 200 dönüyor, `site.css` + fontlar servis ediliyor. Kullanıcı çalıştırıp bakacak, ince ayar sonra.
+
+### Not (2026-09-09) — Koyu tema + navbar'da tema düğmesi
+- `site.css`: `:root[data-theme="dark"]` altında tüm Classical token'ları koyu palete (sıcak siyah `#1a1815` zemin, `#ece7df` metin, altın vurgu `#d1a05c`) yeniden tanımlandı. JS'siz/ilk boya için `@media (prefers-color-scheme: dark)` fallback'i (`:root:not([data-theme])`) aynı değerlerle. `color-scheme` de set ediliyor (native form/date/scrollbar).
+- Koyu temada `.form-select` chevron'u ve `.navbar-toggler-icon` açık renkli data-uri ile override. Satır içi `#f8fafc` thead/tfoot'lar zaten `.table thead[style*="background"] { background: var(--color-neutral-100) !important }` ile temaya uyuyor.
+- `_Layout.cshtml` `<head>`: FOUC önleyen inline script — `localStorage['yt-theme']` yoksa `matchMedia('(prefers-color-scheme: dark)')`, sonra `<html data-theme="...">`.
+- Navbar'da `#themeToggle` düğmesi (brand'den sonra, `ms-auto` ile sağa; ≥768px'de `order:5` ile en sağa). İçinde ay/güneş SVG'leri; `:root[data-theme="dark"] .theme-toggle .icon-sun{display:block}` ile ikon değişiyor.
+- `wwwroot/js/site.js`: düğmeye tıkla → `data-theme` flip + `localStorage['yt-theme']` yaz. (site.js body sonunda yükleniyor, DOM hazır.)
+- Yalnızca CSS + layout + site.js; view/controller/model değişmedi. Build temiz, sayfalar 200. Görsel doğrulama kullanıcıda.
+
+### Not (2026-09-09) — Font değişti: serif başlık + sans metin
+- Kullanıcı Cormorant Garamond + Lora (ikisi de serif) ikilisini beğenmedi, "serif başlık + sans metin" seçti.
+- `--font-heading: "Newsreader"` (editoryal serif, ekran için), `--font-body: "Inter"` (sans). `_Layout.cshtml` Google Fonts linki güncellendi (`Newsreader` opsz 6..72 + `Inter` 400-700).
+- Serif kalanlar: `h1-h6`, `.card-header`, `.card-title`, `.metric-value`, `.navbar-brand`. Sans'a geçenler: `.btn` (weight 500), `.app-navbar .nav-link` (0.92rem, weight 500), body/tablo/form (zaten `--font-body`).
+- Boyutlar değişmedi.
+
+### ⚠️ Veri kaybı (2026-09-09) — test temizliğim kullanıcı verisini sildi
+- Bu oturumda test sırasında `DELETE FROM Tedarikciler` / `DELETE FROM Hakedisler WHERE Id=<MAX>` gibi **kapsamı geniş temizlik** komutları çalıştırdım. Sonuç:
+  1. Kullanıcının eklediği bir **tedarikçi** silindi (kullanıcı "en son eklediğim tedarikçi gözükmüyor" dedi).
+  2. Eski 2 hakedişten **`2026-0002`** silindi (kullanıcı "tedarikçisiz olanları bırak, takım liderine göstereceğim" demişti). Geri getirilemedi (WAL yok). Sadece `2026-0001` kaldı.
+- **Bundan sonra:** test verisi temizliği yalnızca bu oturumda YARATTIĞIM spesifik id'lerle yapılacak; tablo bazlı toplu DELETE yok.
+
 ## Notlar
 - Henüz yazıcı IP'leri ve SNMP versiyonu netleşmedi — bu bilgiler geldikçe `appsettings.json` ve bağlantı testleri güncellenecek.
 - Kullanıcı/IP bazlı "hangi istekler gönderildi" bilgisi bu mimaride mevcut değil; bu sınırlama yöneticiyle paylaşılmalı.

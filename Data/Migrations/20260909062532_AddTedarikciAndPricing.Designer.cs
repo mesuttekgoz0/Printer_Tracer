@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using YaziciTakip.Data;
 
@@ -10,9 +11,11 @@ using YaziciTakip.Data;
 namespace YaziciTakip.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909062532_AddTedarikciAndPricing")]
+    partial class AddTedarikciAndPricing
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.4");
@@ -47,20 +50,18 @@ namespace YaziciTakip.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("ColorType")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("FiyatListesiId")
                         .HasColumnType("INTEGER");
 
                     b.Property<decimal>("SayfaBasiFiyat")
                         .HasColumnType("decimal(18,4)");
 
-                    b.Property<int>("TurId")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.HasIndex("FiyatListesiId");
-
-                    b.HasIndex("TurId");
 
                     b.ToTable("FiyatSatirlari");
                 });
@@ -113,6 +114,9 @@ namespace YaziciTakip.Data.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("decimal(18,2)");
 
+                    b.Property<int>("ColorType")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("CurrentCounter")
                         .HasColumnType("INTEGER");
 
@@ -136,13 +140,6 @@ namespace YaziciTakip.Data.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
-
-                    b.Property<string>("TurAd")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("TurId")
-                        .HasColumnType("INTEGER");
 
                     b.Property<decimal>("UnitPrice")
                         .HasColumnType("decimal(18,4)");
@@ -184,6 +181,9 @@ namespace YaziciTakip.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("ColorType")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("IpAddress")
                         .IsRequired()
                         .HasMaxLength(45)
@@ -201,17 +201,12 @@ namespace YaziciTakip.Data.Migrations
                     b.Property<int?>("TedarikciId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("TurId")
-                        .HasColumnType("INTEGER");
-
                     b.HasKey("Id");
 
                     b.HasIndex("IpAddress")
                         .IsUnique();
 
                     b.HasIndex("TedarikciId");
-
-                    b.HasIndex("TurId");
 
                     b.ToTable("Printers");
                 });
@@ -236,34 +231,6 @@ namespace YaziciTakip.Data.Migrations
                     b.ToTable("Tedarikciler");
                 });
 
-            modelBuilder.Entity("YaziciTakip.Models.Tur", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Ad")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Turler");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            Ad = "Siyah-Beyaz"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            Ad = "Renkli"
-                        });
-                });
-
             modelBuilder.Entity("YaziciTakip.Models.FiyatListesi", b =>
                 {
                     b.HasOne("YaziciTakip.Models.Tedarikci", "Tedarikci")
@@ -283,15 +250,7 @@ namespace YaziciTakip.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("YaziciTakip.Models.Tur", "Tur")
-                        .WithMany()
-                        .HasForeignKey("TurId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.Navigation("FiyatListesi");
-
-                    b.Navigation("Tur");
                 });
 
             modelBuilder.Entity("YaziciTakip.Models.HakedisLine", b =>
@@ -323,14 +282,7 @@ namespace YaziciTakip.Data.Migrations
                         .HasForeignKey("TedarikciId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("YaziciTakip.Models.Tur", "Tur")
-                        .WithMany("Printers")
-                        .HasForeignKey("TurId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Tedarikci");
-
-                    b.Navigation("Tur");
                 });
 
             modelBuilder.Entity("YaziciTakip.Models.FiyatListesi", b =>
@@ -352,11 +304,6 @@ namespace YaziciTakip.Data.Migrations
                 {
                     b.Navigation("FiyatListeleri");
 
-                    b.Navigation("Printers");
-                });
-
-            modelBuilder.Entity("YaziciTakip.Models.Tur", b =>
-                {
                     b.Navigation("Printers");
                 });
 #pragma warning restore 612, 618

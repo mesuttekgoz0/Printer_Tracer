@@ -12,8 +12,6 @@ public class ReadingsIndexViewModel
 
     public List<PrinterReadingStatus> Printers { get; set; } = new();
 
-    public bool HasAnyReading => Printers.Any(p => p.LatestReadingUtc is not null);
-
     /// <summary>Son okumaya göre tüm yazıcılarda toplam fark (pozitif deltalar).</summary>
     public long TotalDelta => Printers.Sum(p => p.Delta ?? 0);
 }
@@ -28,6 +26,12 @@ public class PrinterReadingStatus
 
     /// <summary>Marka/model (SNMP sysDescr). İlk okumaya kadar null.</summary>
     public string? Model { get; set; }
+
+    /// <summary>Yazıcının tür id'si (Tur tablosuna FK). null = belirtilmemiş.</summary>
+    public int? TurId { get; set; }
+
+    /// <summary>Tür adı; belirtilmemişse "Belirtilmemiş".</summary>
+    public string TurAd { get; set; } = Tur.Belirtilmemis;
 
     /// <summary>Bu yazıcı için kayıtlı toplam okuma sayısı.</summary>
     public int ReadingCount { get; set; }

@@ -3,14 +3,15 @@
 @{
     ViewData["Title"] = "Hakedişler";
     var tr = new CultureInfo("tr-TR");
+    string Para(decimal v) => v.ToString("#,##0.00", tr);
 }
 
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <div>
         <h1 class="mb-1">Hakedişler</h1>
-        <div class="text-muted small">Oluşturulan hakediş belgeleri. Yeni belge Sayaç Oku sayfasından, yazıcı seçip “Hakediş oluştur” ile üretilir.</div>
+        <div class="text-muted small">Oluşturulan hakediş belgeleri. Yeni belge, bir tedarikçi seçilerek üretilir.</div>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" asp-controller="Readings" asp-action="Index">Sayaç Oku</a>
+    <a class="btn btn-primary btn-sm" asp-action="New">+ Yeni hakediş</a>
 </div>
 
 @if (TempData["Success"] is string ok)
@@ -35,10 +36,12 @@
                     <thead>
                         <tr>
                             <th>No</th>
+                            <th>Tedarikçi</th>
                             <th>Düzenleme</th>
                             <th>Dönem</th>
                             <th class="text-end">Yazıcı</th>
                             <th class="text-end">Toplam sayfa</th>
+                            <th class="text-end">Toplam tutar ₺</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -47,12 +50,18 @@
                     {
                         <tr>
                             <td class="fw-semibold">@h.Number</td>
+                            <td>@(string.IsNullOrWhiteSpace(h.TedarikciAd) ? "–" : h.TedarikciAd)</td>
                             <td class="text-muted small">@h.CreatedUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm", tr)</td>
                             <td class="text-muted small">@h.PeriodStart.ToString("dd.MM.yyyy") – @h.PeriodEnd.ToString("dd.MM.yyyy")</td>
                             <td class="text-end">@h.PrinterCount</td>
                             <td class="text-end">@h.TotalPages.ToString("N0", tr)</td>
-                            <td class="text-end">
+                            <td class="text-end">@Para(h.TotalAmount)</td>
+                            <td class="text-end text-nowrap">
                                 <a class="btn btn-sm btn-outline-secondary" asp-action="Details" asp-route-id="@h.Id">Aç</a>
+                                <form method="post" asp-action="Delete" asp-route-id="@h.Id" class="d-inline"
+                                      onsubmit="return confirm('Hakediş @h.Number silinsin mi? Bu belge tamamen silinir.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Sil</button>
+                                </form>
                             </td>
                         </tr>
                     }

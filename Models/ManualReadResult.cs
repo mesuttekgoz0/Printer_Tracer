@@ -48,7 +48,4 @@ public class ManualReadRow
         Reachable && NewCounter is { } n && PreviousCounter is { } p && n >= p
             ? n - p
             : null;
-
-    /// <summary>Bu yazıcı için ilk okuma mı (kıyaslanacak önceki değer yok).</summary>
-    public bool IsFirstReading => Reachable && PreviousCounter is null;
 }
