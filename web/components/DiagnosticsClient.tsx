@@ -95,7 +95,21 @@ export function DiagnosticsClient() {
                 </div>
               )}
 
-              {res.manualOidResult && <OidTable title={`Elle OID: ${res.manualOid}`} rows={[res.manualOidResult]} />}
+              {res.manualOid && (
+                res.manualOidResult ? (
+                  <OidTable title={`Elle OID: ${res.manualOid}`} rows={[res.manualOidResult]} />
+                ) : (
+                  <div className="card">
+                    <div className="card-head">Elle OID: <code>{res.manualOid}</code></div>
+                    <div className="card-body">
+                      <p className="small neg" style={{ margin: 0 }}>
+                        Yanıt yok — bu OID cihazda mevcut değil (NoSuchObject/NoSuchInstance),
+                        cihaz SNMP'ye yanıt vermedi ya da <code>{"\""}public{"\""}</code> community ile okunamıyor.
+                      </p>
+                    </div>
+                  </div>
+                )
+              )}
               {res.probes.length > 0 && <OidTable title="Denenen bilinen OID'ler" rows={res.probes} />}
               {res.markerCounters.length > 0 && <OidTable title="prtMarkerLifeCount alt ağacı" rows={res.markerCounters} suggested={res.suggestedOid} />}
             </div>

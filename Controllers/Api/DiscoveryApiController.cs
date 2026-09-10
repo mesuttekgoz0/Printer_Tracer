@@ -32,6 +32,19 @@ public class DiscoveryApiController : ControllerBase
         return new SubnetsDto(subnets, suggested);
     }
 
+    /// <summary>
+    /// Varsayılan ağ geçidinin yönlendirdiği diğer /24 ağları bulur (her x.y.z.1/.254'e ping).
+    /// Dönen CIDR'ler tek tek <c>POST scan</c>'e verilebilir.
+    /// </summary>
+    [HttpGet("reachable-subnets")]
+    public async Task<ActionResult<ReachableSubnetsDto>> ReachableSubnets()
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+        cts.CancelAfter(TimeSpan.FromSeconds(25));
+        var cidrs = await _discovery.FindReachableSubnetsAsync(cts.Token);
+        return new ReachableSubnetsDto(cidrs);
+    }
+
     /// <summary>Verilen CIDR'i (yoksa önerilen ağı) SNMP ile tarar; yazıcıları döndürür.</summary>
     [HttpPost("scan")]
     public async Task<ActionResult<IEnumerable<DiscoveredDto>>> Scan([FromBody] ScanRequest? req)
@@ -82,6 +95,8 @@ public class DiscoveryApiController : ControllerBase
 public record SubnetsDto(IReadOnlyList<SubnetDto> Subnets, string? Suggested);
 
 public record SubnetDto(string Cidr, string InterfaceName, string ServerIp, long HostCount, bool Scannable, bool HasGateway);
+
+public record ReachableSubnetsDto(IReadOnlyList<string> Cidrs);
 
 public record ScanRequest(string? Cidr);
 

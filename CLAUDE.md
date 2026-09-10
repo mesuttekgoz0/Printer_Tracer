@@ -350,6 +350,21 @@ YaziciTakip/
 - **README.md** güncellendi (Worker/polling/SeedSampleReadings/örnek-veri bölümü çıktı, config bloğu sadeleşti, `Ağı Tara` + retry eklendi, `FiyatListesi`→`Fiyat/FiyatDetay`, `DiscoveryApi` eklendi).
 - Test: `dotnet build` 0/0, `next build` temiz; açılışta migration logu ("No migrations were applied. The database is already up to date."), tüm `/api/*` uçları 200, `taslak` yanıtında `fiyatListesiBilgi` alanı yok. Graph: 993→944 node, 2410→2277 edge.
 
+### Not (2026-09-10) — Ağı Tara: "erişilebilir tüm ağları tara" (çok-alt-ağ)
+- İhtiyaç: sunucu sadece `192.168.150.0/24`'e (Wi-Fi) ve `192.168.56.0/24`'e (VirtualBox) doğrudan bağlı; ama varsayılan ağ geçidi (`192.168.150.1`) başka /24'lere yönlendiriyor (ofiste ~12 alt ağ: .1/.4/.5/.30/.60/.70/.80/.90/.100/.110/.150/.155). Kullanıcı 3. okteti bilmiyordu.
+- **`PrinterDiscoveryService.FindReachableSubnetsAsync(ct)`** (yeni): yerel RFC1918 arayüzlerin 2. oktetini alıp `a.b.z.1` ve `a.b.z.254` (z=0..255) adreslerine paralel ping (`Ping.SendPingAsync`, 800ms, SemaphoreSlim 128, 20sn kapak). Yanıt verenin `/24`'ünü döndürür + geçidi olan yerel ağları ekler, geçitsiz yerel ağları (VBox host-only) hariç tutar, ilk 24 ile sınırlar. ~2sn.
+- **`GET /api/discovery/reachable-subnets`** → `{ cidrs: string[] }` (25sn linked-token). `ScanAsync` zaten yerel-arayüz şartı aramıyordu (herhangi /22–/24 CIDR'i geçit üzerinden tarar), değişmedi.
+- **Frontend** `web/components/PrintersClient.tsx` `ScanModal`: "Erişilebilir tüm ağları tara" düğmesi → `reachable-subnets` çek, her CIDR'i sırayla `POST /scan`, sonuçları `ipAddress` ile dedup edip canlı tabloya ekle, ilerleme metni ("3/12 · 192.168.30.0/24 taranıyor…" → "Bitti · N ağ tarandı, M yazıcı bulundu."). Tekli manuel CIDR akışı aynen duruyor.
+- Uyarı (UI'da değil, davranışta): router `.1`'i ping'e cevap verse de VLAN ACL host-host SNMP'yi engelleyebilir → o alt ağ 0 sonuç verir; bu normal.
+- **Güncelleme (aynı gün)**: probe adresleri `.1 .254` → **`.1 .2 .10 .253 .254`** genişletildi (kullanıcı `192.168.0.0/24` listede çıkmıyor dedi — router bacağı `.1` değildi). Sonra `192.168.0.0/24` da çıktı (13 CIDR, ~5sn). Ayrıca `scanAll` artık CIDR kutusundaki elle yazılmış ağı da listeye katıyor (listede olmayan bir ağı bilen kullanıcı için). Sonuç tablosuna solda `#` (sıra no) sütunu eklendi — son satır = bulunan yazıcı sayısı.
+- Test: `dotnet build` + `next build` 0/0. `reachable-subnets` → 13 CIDR (`192.168.0.0/24` dahil), 4.8sn, `192.168.56.0/24` (VBox) hariç. Tek `/24` taraması 9 yazıcı / 5.9sn. Tarayıcı görsel doğrulaması yapılamadı (eklenti bağlı değil).
+
+### Not (2026-09-10) — SNMP Tanılama: elle OID sonucu boşsa hiçbir şey gösterilmiyordu
+- **Kullanıcı**: "snmp tanılama kısmında elle oid sonucu yazdırılmıyor."
+- **Kök neden** (`web/components/DiagnosticsClient.tsx`): `{res.manualOidResult && <OidTable .../>}` — `ProbeOidAsync` yanıt yoksa / OID cihazda yoksa (`NoSuchObject/NoSuchInstance`, timeout, community reddi) `null` döner → tablo hiç render edilmiyordu, sorgu yapılmış gibi bile görünmüyordu.
+- **Fix**: `res.manualOid` doluysa artık her zaman bir şey gösteriliyor: sonuç varsa `OidTable`, yoksa "Yanıt yok — bu OID cihazda mevcut değil / cihaz yanıt vermedi / public community ile okunamıyor" kartı. Backend değişmedi.
+- Test: `next build` temiz. `GET /api/diagnostics?ip=...&oid=<geçersiz>` → `manualOid` dolu, `manualOidResult: null` → UI "Yanıt yok" kartı. Geçerli OID (sayaç `7365`, sysDescr) → OidTable satırı. Flaky boş yanıt (.204) → satır "–" ile.
+
 ## Notlar
 - Henüz yazıcı IP'leri ve SNMP versiyonu netleşmedi — bu bilgiler geldikçe `appsettings.json` ve bağlantı testleri güncellenecek.
 - Kullanıcı/IP bazlı "hangi istekler gönderildi" bilgisi bu mimaride mevcut değil; bu sınırlama yöneticiyle paylaşılmalı.

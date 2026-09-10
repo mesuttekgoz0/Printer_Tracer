@@ -178,6 +178,7 @@ function ScanModal({ onClose, onAdded }: { onClose: () => void; onAdded: (count:
   const [subnets, setSubnets] = useState<SubnetsResponse | null>(null);
   const [cidr, setCidr] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [results, setResults] = useState<DiscoveredPrinter[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
@@ -196,6 +197,7 @@ function ScanModal({ onClose, onAdded }: { onClose: () => void; onAdded: (count:
     setScanning(true);
     setErr(null);
     setResults(null);
+    setProgress(null);
     setAdded(new Set());
     try {
       setResults(await api.post<DiscoveredPrinter[]>("/api/discovery/scan", { cidr: cidr.trim() || null }));
@@ -203,6 +205,41 @@ function ScanModal({ onClose, onAdded }: { onClose: () => void; onAdded: (count:
       setErr(e instanceof ApiError ? e.message : "Tarama başarısız.");
     } finally {
       setScanning(false);
+    }
+  }
+
+  async function scanAll() {
+    setScanning(true);
+    setErr(null);
+    setResults(null);
+    setProgress("Erişilebilir ağlar bulunuyor…");
+    setAdded(new Set());
+    const merged = new Map<string, DiscoveredPrinter>();
+    try {
+      const { cidrs } = await api.get<{ cidrs: string[] }>("/api/discovery/reachable-subnets");
+      // Kutuda elle yazılmış bir CIDR varsa (listede olmayan bir ağ) onu da tara.
+      const manual = cidr.trim();
+      const list = [...new Set([...(manual ? [manual] : []), ...cidrs])];
+      if (list.length === 0) {
+        setErr("Taranabilir başka ağ bulunamadı (yönlendirilen alt ağ yok).");
+        return;
+      }
+      for (let i = 0; i < list.length; i++) {
+        setProgress(`${i + 1}/${list.length} · ${list[i]} taranıyor…`);
+        try {
+          const found = await api.post<DiscoveredPrinter[]>("/api/discovery/scan", { cidr: list[i] });
+          for (const d of found) if (!merged.has(d.ipAddress)) merged.set(d.ipAddress, d);
+          if (merged.size > 0) setResults(Array.from(merged.values()));
+        } catch {
+          /* tek bir alt ağ hatası tüm taramayı bozmasın */
+        }
+      }
+      setProgress(`Bitti · ${list.length} ağ tarandı, ${merged.size} yazıcı bulundu.`);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Tarama başarısız.");
+    } finally {
+      setScanning(false);
+      if (merged.size > 0) setResults(Array.from(merged.values()));
     }
   }
 
@@ -247,9 +284,14 @@ function ScanModal({ onClose, onAdded }: { onClose: () => void; onAdded: (count:
               {scanning ? "Taranıyor…" : "Tara"}
             </button>
           </div>
-          <p className="muted small" style={{ marginTop: "var(--space-2)" }}>
-            Sunucuyla aynı ağdaki, SNMP açık yazıcıları bulur. /24 için ~5–10 sn.
-          </p>
+          <div style={{ marginTop: "var(--space-2)", display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <button type="button" className="btn btn-sm" onClick={scanAll} disabled={scanning}>
+              Erişilebilir tüm ağları tara
+            </button>
+            <span className="muted small">
+              {progress ?? "Sunucuyla aynı ağdaki SNMP açık yazıcıları bulur. /24 için ~5–10 sn."}
+            </span>
+          </div>
         </div>
 
         {results && (
@@ -260,6 +302,7 @@ function ScanModal({ onClose, onAdded }: { onClose: () => void; onAdded: (count:
               <table className="table">
                 <thead>
                   <tr>
+                    <th style={{ width: "1%", textAlign: "right" }}>#</th>
                     <th>IP</th>
                     <th>Ad (sysName)</th>
                     <th>Model</th>
@@ -268,10 +311,11 @@ function ScanModal({ onClose, onAdded }: { onClose: () => void; onAdded: (count:
                   </tr>
                 </thead>
                 <tbody>
-                  {results.map((d) => {
+                  {results.map((d, i) => {
                     const isAdded = d.alreadyRegistered || added.has(d.ipAddress);
                     return (
                       <tr key={d.ipAddress}>
+                        <td className="tnum muted" style={{ textAlign: "right" }}>{i + 1}</td>
                         <td className="tnum"><code>{d.ipAddress}</code></td>
                         <td>
                           {d.sysName || <span className="muted">—</span>}

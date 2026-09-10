@@ -88,6 +88,75 @@ public class PrinterDiscoveryService
             .ToList();
     }
 
+    /// <summary>
+    /// Sunucunun varsayılan ağ geçidinin yönlendirdiği <b>diğer</b> /24 ağları bulur:
+    /// yerel özel aralık(lar)daki her /24'ün tipik router adreslerine (.1 .2 .10 .253 .254)
+    /// ping atar, yanıt verenin /24'ünü döndürür. Router ICMP'yi kapattıysa ya da geçit
+    /// başka adresteyse o /24 listede çıkmaz — kullanıcı CIDR'i elle yazıp tarayabilir.
+    /// Farklı VLAN'da router ping'e cevap verse bile host-host SNMP geçmeyebilir.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> FindReachableSubnetsAsync(CancellationToken ct)
+    {
+        // Yerel arayüzlerden aday /24 ağ geçidi adresleri türet.
+        var thirdOctetBases = new HashSet<(byte A, byte B)>();
+        var localCidrs = new HashSet<string>();
+        var excludeCidrs = new HashSet<string>(); // geçitsiz yerel ağlar (VirtualBox host-only vb.)
+
+        foreach (var s in GetLocalSubnets())
+        {
+            if (s.Scannable && s.HasGateway) localCidrs.Add(s.Cidr);
+            else if (s.Scannable) excludeCidrs.Add(s.Cidr);
+            if (!IPAddress.TryParse(s.ServerIp, out var ip)) continue;
+            var b = ip.GetAddressBytes();
+            // Yalnızca RFC1918 özel aralıkları: 10/8, 172.16/12, 192.168/16
+            if (b[0] == 10 || (b[0] == 172 && b[1] is >= 16 and <= 31) || (b[0] == 192 && b[1] == 168))
+                thirdOctetBases.Add((b[0], b[1]));
+        }
+
+        if (thirdOctetBases.Count == 0)
+            return localCidrs.OrderBy(NumericKey).ToList();
+
+        // Tipik router bacağı adresleri — biri bile cevap verirse o /24 taranabilir sayılır.
+        byte[] gwHosts = { 1, 2, 10, 253, 254 };
+        var candidates = new List<IPAddress>();
+        foreach (var (a, bb) in thirdOctetBases)
+            for (int z = 0; z <= 255; z++)
+                foreach (var h in gwHosts)
+                    candidates.Add(new IPAddress(new byte[] { a, bb, (byte)z, h }));
+
+        var alive = new HashSet<string>();
+        var gate = new SemaphoreSlim(128);
+        using var timeCap = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeCap.CancelAfter(TimeSpan.FromSeconds(20));
+
+        var tasks = candidates.Select(async target =>
+        {
+            await gate.WaitAsync(timeCap.Token);
+            try
+            {
+                using var ping = new Ping();
+                var reply = await ping.SendPingAsync(target, 800);
+                if (reply.Status == IPStatus.Success)
+                {
+                    var b = target.GetAddressBytes();
+                    lock (alive) alive.Add($"{b[0]}.{b[1]}.{b[2]}.0/24");
+                }
+            }
+            catch (Exception ex) when (ex is PingException or OperationCanceledException) { }
+            finally { gate.Release(); }
+        });
+
+        try { await Task.WhenAll(tasks); }
+        catch (OperationCanceledException) { /* 20sn kapağı — eldekiyle devam */ }
+
+        foreach (var c in localCidrs) alive.Add(c);
+        alive.ExceptWith(excludeCidrs);
+        return alive.OrderBy(NumericKey).Take(24).ToList();
+
+        static uint NumericKey(string cidr) =>
+            ToUInt(IPAddress.Parse(cidr.Split('/')[0]).GetAddressBytes());
+    }
+
     /// <summary>Verilen CIDR'deki tüm host'ları SNMP ile yoklar; yazıcı olanları döndürür.</summary>
     public async Task<IReadOnlyList<DiscoveredDevice>> ScanAsync(string cidr, CancellationToken ct)
     {

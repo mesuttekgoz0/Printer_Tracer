@@ -37,7 +37,8 @@ sayfa sayısını verir.
 - **SNMP Tanılama** – bir IP'ye GET/WALK yapıp `sysDescr`, `sysName`, marka ve
   doğru sayfa-sayacı OID'ini önerir.
 - **Ağı Tara** – yerel alt ağı SNMP ile tarayıp bulunan yazıcıları listeler,
-  tek tıkla ekler (Yazıcılar sayfası).
+  tek tıkla ekler (Yazıcılar sayfası). "Erişilebilir tüm ağları tara" ile
+  varsayılan ağ geçidinin yönlendirdiği diğer /24 ağlar da sırayla taranır.
 - **SNMP v2c / v1** – önce v2c (`public`), başarısızsa v1. Geçici UDP paket
   kaybına karşı yeniden deneme (`Snmp:Retries`).
 - Okumalar **yalnızca elle** yapılır (arka planda periyodik toplama yoktur);
