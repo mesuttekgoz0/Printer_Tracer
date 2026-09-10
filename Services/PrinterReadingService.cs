@@ -5,8 +5,8 @@ using YaziciTakip.Models;
 namespace YaziciTakip.Services;
 
 /// <summary>
-/// Kayıtlı tüm yazıcıların SNMP sayfa sayacını tek seferde okuyup SQLite'a kaydeder.
-/// Arayüzdeki "Şimdi Oku" düğmesi ve (açıksa) <see cref="PrinterMonitorWorker"/> ortak kullanır.
+/// Kayıtlı tüm yazıcıların (veya verilen alt kümenin) SNMP sayfa sayacını tek seferde
+/// okuyup SQLite'a kaydeder. Arayüzdeki "Sayaç Oku" (POST /api/readings/read) tetikler.
 /// </summary>
 public class PrinterReadingService
 {

@@ -5,7 +5,11 @@ using YaziciTakip.Models;
 
 namespace YaziciTakip.Controllers.Api;
 
-/// <summary>Tedarikçiler + tarihli fiyat listeleri JSON API'si.</summary>
+/// <summary>
+/// Tedarikçiler + fiyatlandırma JSON API'si.
+/// Fiyat modeli: <see cref="Fiyat"/> (master: tedarikçi + tür) → <see cref="FiyatDetay"/>
+/// (tarih aralığı + sayfa-başı fiyat).
+/// </summary>
 [ApiController]
 [Route("api/tedarikciler")]
 [Produces("application/json")]
@@ -21,14 +25,13 @@ public class TedarikcilerApiController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TedarikciListDto>>> GetAll()
     {
-        var today = DateOnly.FromDateTime(DateTime.Now);
         return await _db.Tedarikciler.AsNoTracking()
             .OrderBy(t => t.Ad)
             .Select(t => new TedarikciListDto(
                 t.Id, t.Ad, t.Not,
                 t.Printers.Count,
-                t.FiyatListeleri.Count,
-                t.FiyatListeleri.OrderByDescending(f => f.Tarih).Select(f => (DateOnly?)f.Tarih).FirstOrDefault()))
+                t.Fiyatlar.Count,
+                t.Fiyatlar.SelectMany(f => f.Detaylar).Count()))
             .ToListAsync();
     }
 
@@ -37,28 +40,29 @@ public class TedarikcilerApiController : ControllerBase
     {
         var t = await _db.Tedarikciler.AsNoTracking()
             .Include(x => x.Printers.OrderBy(p => p.Name)).ThenInclude(p => p.Tur)
-            .Include(x => x.FiyatListeleri.OrderByDescending(f => f.Tarih)).ThenInclude(f => f.Satirlar)
+            .Include(x => x.Fiyatlar).ThenInclude(f => f.Tur)
+            .Include(x => x.Fiyatlar).ThenInclude(f => f.Detaylar)
             .FirstOrDefaultAsync(x => x.Id == id);
         if (t is null) return NotFound();
 
         var turler = await _db.Turler.AsNoTracking().OrderBy(x => x.Id)
             .Select(x => new OptionDto(x.Id, x.Ad)).ToListAsync();
-        var turAd = turler.ToDictionary(x => x.Id, x => x.Ad);
 
         var today = DateOnly.FromDateTime(DateTime.Now);
-        var currentListId = t.FiyatListeleri
-            .Where(f => f.Tarih <= today)
-            .OrderByDescending(f => f.Tarih).ThenByDescending(f => f.Id)
-            .Select(f => (int?)f.Id).FirstOrDefault();
 
         return new TedarikciDetailDto(
             t.Id, t.Ad, t.Not,
             t.Printers.Select(p => new TedarikciPrinterDto(p.Id, p.Name, p.IpAddress, p.TurAdi)).ToList(),
-            t.FiyatListeleri.Select(f => new FiyatListesiDto(
-                f.Id, f.ListeAdi, f.Tarih, f.Id == currentListId,
-                turler.Select(tur => new FiyatSatiriDto(
-                    tur.Id, tur.Ad,
-                    f.Satirlar.FirstOrDefault(s => s.TurId == tur.Id)?.SayfaBasiFiyat ?? 0m)).ToList())).ToList(),
+            t.Fiyatlar
+                .OrderBy(f => f.TurId)
+                .Select(f => new FiyatDto(
+                    f.Id, f.TurId, f.Tur?.Ad ?? Tur.Belirtilmemis,
+                    f.Detaylar
+                        .OrderByDescending(d => d.BaslangicTarihi).ThenByDescending(d => d.Id)
+                        .Select(d => new FiyatDetayDto(
+                            d.Id, d.BaslangicTarihi, d.BitisTarihi, d.SayfaBasiFiyat, d.Kapsar(today)))
+                        .ToList()))
+                .ToList(),
             turler);
     }
 
@@ -73,7 +77,7 @@ public class TedarikcilerApiController : ControllerBase
         _db.Tedarikciler.Add(t);
         await _db.SaveChangesAsync();
         return CreatedAtAction(nameof(Get), new { id = t.Id },
-            new TedarikciListDto(t.Id, t.Ad, t.Not, 0, 0, null));
+            new TedarikciListDto(t.Id, t.Ad, t.Not, 0, 0, 0));
     }
 
     [HttpPut("{id:int}")]
@@ -101,26 +105,39 @@ public class TedarikcilerApiController : ControllerBase
         return NoContent();
     }
 
-    [HttpPost("{id:int}/fiyat-listeleri")]
-    public async Task<IActionResult> AddPriceList(int id, [FromBody] FiyatListesiRequest req)
+    /// <summary>
+    /// Yeni fiyat: bir tür seçilir, tarih aralığı + tek fiyat girilir.
+    /// (Tedarikçi, tür) için master yoksa oluşturulur; sonra detay eklenir.
+    /// </summary>
+    [HttpPost("{id:int}/fiyatlar")]
+    public async Task<IActionResult> AddFiyat(int id, [FromBody] AddFiyatRequest req)
     {
         var t = await _db.Tedarikciler.FindAsync(id);
         if (t is null) return NotFound();
 
-        var listeAdi = (req.ListeAdi ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(listeAdi))
-            return Problem("Liste adı boş olamaz.", statusCode: 400);
+        if (!await _db.Turler.AnyAsync(x => x.Id == req.TurId))
+            return Problem("Geçerli bir tür seçin.", statusCode: 400);
+        if (req.BaslangicTarihi is not { } bas || req.BitisTarihi is not { } bit)
+            return Problem("Başlangıç ve bitiş tarihi gerekli.", statusCode: 400);
+        if (bas > bit)
+            return Problem("Başlangıç tarihi bitiş tarihinden sonra olamaz.", statusCode: 400);
 
-        var liste = new FiyatListesi
+        var master = await _db.Fiyatlar
+            .FirstOrDefaultAsync(f => f.TedarikciId == id && f.TurId == req.TurId);
+        if (master is null)
         {
-            TedarikciId = id,
-            ListeAdi = listeAdi,
-            Tarih = req.Tarih ?? DateOnly.FromDateTime(DateTime.Now),
-        };
-        foreach (var f in req.Fiyatlar ?? Enumerable.Empty<FiyatGirdiDto>())
-            liste.Satirlar.Add(new FiyatSatiri { TurId = f.TurId, SayfaBasiFiyat = Math.Max(0m, f.Fiyat) });
+            master = new Fiyat { TedarikciId = id, TurId = req.TurId };
+            _db.Fiyatlar.Add(master);
+        }
 
-        _db.FiyatListeleri.Add(liste);
+        master.Detaylar.Add(new FiyatDetay
+        {
+            TurId = req.TurId,
+            BaslangicTarihi = bas,
+            BitisTarihi = bit,
+            SayfaBasiFiyat = Math.Max(0m, req.SayfaBasiFiyat),
+        });
+
         await _db.SaveChangesAsync();
         return NoContent();
     }
@@ -128,40 +145,33 @@ public class TedarikcilerApiController : ControllerBase
     private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 }
 
-/// <summary>Fiyat listesi güncelleme/silme — id kendi başına benzersiz olduğu için ayrı route.</summary>
+/// <summary>Tek bir fiyat detay satırının güncellenmesi/silinmesi.</summary>
 [ApiController]
-[Route("api/fiyat-listeleri")]
+[Route("api/fiyat-detaylari")]
 [Produces("application/json")]
-public class FiyatListeleriApiController : ControllerBase
+public class FiyatDetaylariApiController : ControllerBase
 {
     private readonly AppDbContext _db;
 
-    public FiyatListeleriApiController(AppDbContext db)
+    public FiyatDetaylariApiController(AppDbContext db)
     {
         _db = db;
     }
 
     [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id, [FromBody] FiyatListesiRequest req)
+    public async Task<IActionResult> Update(int id, [FromBody] FiyatDetayRequest req)
     {
-        var liste = await _db.FiyatListeleri.Include(f => f.Satirlar).FirstOrDefaultAsync(f => f.Id == id);
-        if (liste is null) return NotFound();
+        var d = await _db.FiyatDetaylari.FindAsync(id);
+        if (d is null) return NotFound();
 
-        var listeAdi = (req.ListeAdi ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(listeAdi))
-            return Problem("Liste adı boş olamaz.", statusCode: 400);
+        if (req.BaslangicTarihi is not { } bas || req.BitisTarihi is not { } bit)
+            return Problem("Başlangıç ve bitiş tarihi gerekli.", statusCode: 400);
+        if (bas > bit)
+            return Problem("Başlangıç tarihi bitiş tarihinden sonra olamaz.", statusCode: 400);
 
-        liste.ListeAdi = listeAdi;
-        if (req.Tarih is { } t) liste.Tarih = t;
-
-        foreach (var f in req.Fiyatlar ?? Enumerable.Empty<FiyatGirdiDto>())
-        {
-            var fiyat = Math.Max(0m, f.Fiyat);
-            var row = liste.Satirlar.FirstOrDefault(s => s.TurId == f.TurId);
-            if (row is null) liste.Satirlar.Add(new FiyatSatiri { TurId = f.TurId, SayfaBasiFiyat = fiyat });
-            else row.SayfaBasiFiyat = fiyat;
-        }
-
+        d.BaslangicTarihi = bas;
+        d.BitisTarihi = bit;
+        d.SayfaBasiFiyat = Math.Max(0m, req.SayfaBasiFiyat);
         await _db.SaveChangesAsync();
         return NoContent();
     }
@@ -169,30 +179,46 @@ public class FiyatListeleriApiController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var liste = await _db.FiyatListeleri.FindAsync(id);
-        if (liste is null) return NotFound();
-        _db.FiyatListeleri.Remove(liste);
+        var d = await _db.FiyatDetaylari.FindAsync(id);
+        if (d is null) return NotFound();
+
+        _db.FiyatDetaylari.Remove(d);
         await _db.SaveChangesAsync();
+
+        // Master'ın başka detayı kalmadıysa master'ı da sil.
+        var kalan = await _db.FiyatDetaylari.CountAsync(x => x.FiyatId == d.FiyatId);
+        if (kalan == 0)
+        {
+            var master = await _db.Fiyatlar.FindAsync(d.FiyatId);
+            if (master is not null)
+            {
+                _db.Fiyatlar.Remove(master);
+                await _db.SaveChangesAsync();
+            }
+        }
+
         return NoContent();
     }
 }
 
-public record TedarikciListDto(int Id, string Ad, string? Not, int PrinterCount, int PriceListCount, DateOnly? LatestPriceListDate);
+public record TedarikciListDto(
+    int Id, string Ad, string? Not, int PrinterCount, int FiyatSayisi, int DetaySayisi);
 
 public record TedarikciDetailDto(
     int Id, string Ad, string? Not,
     IReadOnlyList<TedarikciPrinterDto> Printers,
-    IReadOnlyList<FiyatListesiDto> FiyatListeleri,
+    IReadOnlyList<FiyatDto> Fiyatlar,
     IReadOnlyList<OptionDto> Turler);
 
 public record TedarikciPrinterDto(int Id, string Name, string IpAddress, string TurAd);
 
-public record FiyatListesiDto(int Id, string ListeAdi, DateOnly Tarih, bool IsCurrent, IReadOnlyList<FiyatSatiriDto> Satirlar);
+public record FiyatDto(int Id, int TurId, string TurAd, IReadOnlyList<FiyatDetayDto> Detaylar);
 
-public record FiyatSatiriDto(int TurId, string TurAd, decimal SayfaBasiFiyat);
+public record FiyatDetayDto(
+    int Id, DateOnly BaslangicTarihi, DateOnly BitisTarihi, decimal SayfaBasiFiyat, bool IsCurrent);
 
 public record TedarikciRequest(string? Ad, string? Not);
 
-public record FiyatListesiRequest(string? ListeAdi, DateOnly? Tarih, List<FiyatGirdiDto>? Fiyatlar);
+public record AddFiyatRequest(int TurId, DateOnly? BaslangicTarihi, DateOnly? BitisTarihi, decimal SayfaBasiFiyat);
 
-public record FiyatGirdiDto(int TurId, decimal Fiyat);
+public record FiyatDetayRequest(DateOnly? BaslangicTarihi, DateOnly? BitisTarihi, decimal SayfaBasiFiyat);

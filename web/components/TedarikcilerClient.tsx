@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { TedarikciList } from "@/lib/types";
-import { d } from "@/lib/format";
 
 export function TedarikcilerClient() {
   const [list, setList] = useState<TedarikciList[]>([]);
@@ -45,7 +44,7 @@ export function TedarikcilerClient() {
     <>
       <div className="page-head">
         <h1>Tedarikçiler</h1>
-        <p className="muted small">Yazıcı servis/bayi firmaları ve tarihli sayfa-başı fiyat listeleri.</p>
+        <p className="muted small">Yazıcı servis/bayi firmaları ve tür bazlı, tarih aralıklı sayfa-başı fiyatları.</p>
       </div>
 
       {msg && <div className={`alert ${msg.kind === "ok" ? "alert-ok" : "alert-err"}`} style={{ marginBottom: "var(--space-4)" }}>{msg.text}</div>}
@@ -82,8 +81,7 @@ export function TedarikcilerClient() {
                     <th>Ad</th>
                     <th>Not</th>
                     <th className="num">Yazıcı</th>
-                    <th className="num">Fiyat listesi</th>
-                    <th>Son liste</th>
+                    <th className="num">Fiyat kaydı</th>
                     <th />
                   </tr>
                 </thead>
@@ -93,8 +91,9 @@ export function TedarikcilerClient() {
                       <td><strong>{t.ad}</strong></td>
                       <td className="muted small">{t.not || "–"}</td>
                       <td className="num">{t.printerCount}</td>
-                      <td className="num">{t.priceListCount === 0 ? <span className="neg">0</span> : t.priceListCount}</td>
-                      <td className="muted small">{t.latestPriceListDate ? d(t.latestPriceListDate) : "–"}</td>
+                      <td className="num">
+                        {t.detaySayisi === 0 ? <span className="neg">0</span> : t.detaySayisi}
+                      </td>
                       <td><Link className="btn btn-sm" href={`/tedarikciler/${t.id}`}>Aç / Düzenle</Link></td>
                     </tr>
                   ))}

@@ -4,14 +4,17 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import type { FiyatListesi, Option, TedarikciDetail } from "@/lib/types";
+import type { Fiyat, FiyatDetay, Option, TedarikciDetail } from "@/lib/types";
 import { d, iso, parseFiyat, unit } from "@/lib/format";
+
+type Msg = { kind: "ok" | "err"; text: string } | null;
+type Run = (fn: () => Promise<unknown>, ok: string, then?: () => void) => Promise<void>;
 
 export function TedarikciDetailClient({ id }: { id: number }) {
   const router = useRouter();
   const [data, setData] = useState<TedarikciDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [msg, setMsg] = useState<Msg>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -28,7 +31,7 @@ export function TedarikciDetailClient({ id }: { id: number }) {
     load();
   }, [load]);
 
-  async function run(fn: () => Promise<unknown>, ok: string, then?: () => void) {
+  const run: Run = async (fn, ok, then) => {
     try {
       await fn();
       setMsg({ kind: "ok", text: ok });
@@ -36,7 +39,7 @@ export function TedarikciDetailClient({ id }: { id: number }) {
     } catch (e) {
       setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "İşlem başarısız." });
     }
-  }
+  };
 
   if (loading || !data) {
     return (
@@ -57,7 +60,7 @@ export function TedarikciDetailClient({ id }: { id: number }) {
 
       {msg && <div className={`alert ${msg.kind === "ok" ? "alert-ok" : "alert-err"}`} style={{ marginBottom: "var(--space-4)" }}>{msg.text}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 1fr) minmax(320px, 1.4fr)", gap: "var(--space-4)", alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 0.9fr) minmax(460px, 1.7fr)", gap: "var(--space-4)", alignItems: "start" }}>
         <div className="stack">
           <InfoCard data={data} onSaved={load} onDeleted={() => router.push("/tedarikciler")} run={run} />
           <div className="card">
@@ -82,35 +85,22 @@ export function TedarikciDetailClient({ id }: { id: number }) {
         </div>
 
         <div className="stack">
-          <AddPriceList tedarikciId={id} turler={data.turler} onAdded={load} run={run} />
-          <div className="card">
-            <div className="card-head">Fiyat listeleri ({data.fiyatListeleri.length})</div>
-            <div className="card-body p0">
-              {data.fiyatListeleri.length === 0 ? (
-                <p className="empty small neg">Fiyat listesi yok — hakediş tutarları 0 hesaplanır.</p>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Liste adı</th>
-                        <th>Tarih</th>
-                        {data.turler.map((t) => (
-                          <th key={t.id} className="num">{t.ad} ₺</th>
-                        ))}
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.fiyatListeleri.map((f) => (
-                        <PriceRow key={f.id} f={f} turler={data.turler} onSaved={load} run={run} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+          <AddFiyat tedarikciId={id} turler={data.turler} onAdded={load} run={run} />
+
+          {data.fiyatlar.length === 0 ? (
+            <div className="card">
+              <div className="card-head">Fiyatlar</div>
+              <div className="card-body">
+                <p className="empty small neg" style={{ padding: "var(--space-3)" }}>
+                  Fiyat tanımlı değil — bu tedarikçi için hakediş tutarları 0 hesaplanır.
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            data.fiyatlar.map((f) => (
+              <FiyatKarti key={f.id} fiyat={f} onSaved={load} run={run} />
+            ))
+          )}
         </div>
       </div>
     </>
@@ -126,7 +116,7 @@ function InfoCard({
   data: TedarikciDetail;
   onSaved: () => void;
   onDeleted: () => void;
-  run: (fn: () => Promise<unknown>, ok: string, then?: () => void) => Promise<void>;
+  run: Run;
 }) {
   const [ad, setAd] = useState(data.ad);
   const [not, setNot] = useState(data.not ?? "");
@@ -152,7 +142,7 @@ function InfoCard({
           <button
             className="btn btn-sm btn-danger"
             onClick={() => {
-              if (confirm(`${data.ad} silinsin mi? Bağlı yazıcıların tedarikçi bağı kaldırılır, fiyat listeleri silinir.`)) {
+              if (confirm(`${data.ad} silinsin mi? Bağlı yazıcıların tedarikçi bağı kaldırılır, fiyatları silinir.`)) {
                 run(() => api.del(`/api/tedarikciler/${data.id}`), "Tedarikçi silindi.", onDeleted);
               }
             }}
@@ -165,7 +155,7 @@ function InfoCard({
   );
 }
 
-function AddPriceList({
+function AddFiyat({
   tedarikciId,
   turler,
   onAdded,
@@ -174,15 +164,17 @@ function AddPriceList({
   tedarikciId: number;
   turler: Option[];
   onAdded: () => void;
-  run: (fn: () => Promise<unknown>, ok: string, then?: () => void) => Promise<void>;
+  run: Run;
 }) {
-  const [listeAdi, setListeAdi] = useState("");
-  const [tarih, setTarih] = useState(iso(new Date()));
-  const [fiyat, setFiyat] = useState<Record<number, string>>({});
+  const today = new Date();
+  const [turId, setTurId] = useState("");
+  const [bas, setBas] = useState(iso(today));
+  const [bit, setBit] = useState(iso(new Date(today.getFullYear() + 1, today.getMonth(), today.getDate())));
+  const [fiyat, setFiyat] = useState("");
 
   return (
     <div className="card">
-      <div className="card-head">Yeni fiyat listesi</div>
+      <div className="card-head">Yeni fiyat</div>
       <div className="card-body">
         <form
           className="form-grid"
@@ -190,100 +182,128 @@ function AddPriceList({
             e.preventDefault();
             run(
               () =>
-                api.post(`/api/tedarikciler/${tedarikciId}/fiyat-listeleri`, {
-                  listeAdi,
-                  tarih,
-                  fiyatlar: turler.map((t) => ({ turId: t.id, fiyat: parseFiyat(fiyat[t.id] ?? "") })),
+                api.post(`/api/tedarikciler/${tedarikciId}/fiyatlar`, {
+                  turId: Number(turId),
+                  baslangicTarihi: bas,
+                  bitisTarihi: bit,
+                  sayfaBasiFiyat: parseFiyat(fiyat),
                 }),
-              "Fiyat listesi eklendi.",
+              "Fiyat eklendi.",
               () => {
-                setListeAdi("");
-                setFiyat({});
+                setTurId("");
+                setFiyat("");
                 onAdded();
               },
             );
           }}
         >
           <div className="field">
-            <label>Liste adı</label>
-            <input className="input" value={listeAdi} onChange={(e) => setListeAdi(e.target.value)} required placeholder="ör. 2026 sözleşme" />
+            <label>Tür</label>
+            <select className="select" value={turId} onChange={(e) => setTurId(e.target.value)} required>
+              <option value="" disabled>— seçin —</option>
+              {turler.map((t) => (
+                <option key={t.id} value={t.id}>{t.ad}</option>
+              ))}
+            </select>
           </div>
           <div className="field">
-            <label>Geçerlilik tarihi</label>
-            <input className="input" type="date" value={tarih} onChange={(e) => setTarih(e.target.value)} />
+            <label>Başlangıç tarihi</label>
+            <input className="input" type="date" value={bas} onChange={(e) => setBas(e.target.value)} required />
           </div>
-          {turler.map((t) => (
-            <div className="field" key={t.id}>
-              <label>{t.ad} ₺/sayfa</label>
-              <input
-                className="input"
-                inputMode="decimal"
-                value={fiyat[t.id] ?? ""}
-                onChange={(e) => setFiyat((s) => ({ ...s, [t.id]: e.target.value }))}
-                placeholder="0,00"
-              />
-            </div>
-          ))}
-          <button type="submit" className="btn btn-sm btn-primary">Fiyat listesi ekle</button>
+          <div className="field">
+            <label>Bitiş tarihi</label>
+            <input className="input" type="date" value={bit} onChange={(e) => setBit(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>₺ / sayfa</label>
+            <input className="input" inputMode="decimal" value={fiyat} onChange={(e) => setFiyat(e.target.value)} placeholder="0,00" required />
+          </div>
+          <button type="submit" className="btn btn-sm btn-primary">Ekle</button>
         </form>
         <p className="muted small" style={{ marginTop: "var(--space-2)" }}>
-          Hakediş üretilirken dönem bitiş tarihine göre en güncel liste kullanılır. Ondalık için virgül veya nokta.
+          Hakediş, dönem bitiş tarihini kapsayan aralığın fiyatını kullanır. Ondalık için virgül veya nokta.
         </p>
       </div>
     </div>
   );
 }
 
-function PriceRow({
-  f,
-  turler,
-  onSaved,
-  run,
-}: {
-  f: FiyatListesi;
-  turler: Option[];
-  onSaved: () => void;
-  run: (fn: () => Promise<unknown>, ok: string, then?: () => void) => Promise<void>;
-}) {
-  const [listeAdi, setListeAdi] = useState(f.listeAdi);
-  const [tarih, setTarih] = useState(f.tarih.slice(0, 10));
-  const [fiyat, setFiyat] = useState<Record<number, string>>(
-    Object.fromEntries(turler.map((t) => [t.id, String(f.satirlar.find((s) => s.turId === t.id)?.sayfaBasiFiyat ?? 0)])),
+function FiyatKarti({ fiyat, onSaved, run }: { fiyat: Fiyat; onSaved: () => void; run: Run }) {
+  return (
+    <div className="card">
+      <div className="card-head">Fiyat — {fiyat.turAd}</div>
+      <div className="card-body p0">
+        <div style={{ overflowX: "auto" }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th style={{ width: "1%" }} />
+                <th>Başlangıç</th>
+                <th>Bitiş</th>
+                <th className="num">₺ / sayfa</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {fiyat.detaylar.map((det) => (
+                <DetayRow key={det.id} det={det} onSaved={onSaved} run={run} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
+}
+
+function DetayRow({ det, onSaved, run }: { det: FiyatDetay; onSaved: () => void; run: Run }) {
+  const [bas, setBas] = useState(det.baslangicTarihi.slice(0, 10));
+  const [bit, setBit] = useState(det.bitisTarihi.slice(0, 10));
+  const [fiyat, setFiyat] = useState(String(det.sayfaBasiFiyat));
+
+  const dirty = bas !== det.baslangicTarihi.slice(0, 10) || bit !== det.bitisTarihi.slice(0, 10) || parseFiyat(fiyat) !== det.sayfaBasiFiyat;
 
   return (
     <tr>
-      <td>
-        <input className="input select-sm" value={listeAdi} onChange={(e) => setListeAdi(e.target.value)} />
-        {f.isCurrent && <span className="tag" style={{ marginTop: 4, display: "inline-block", background: "var(--color-accent-100)", color: "var(--color-accent-800)" }}>güncel</span>}
+      <td style={{ verticalAlign: "middle" }}>
+        {det.isCurrent && (
+          <span
+            className="tag"
+            style={{ background: "var(--color-accent-100)", color: "var(--color-accent-800)", whiteSpace: "nowrap" }}
+          >
+            güncel
+          </span>
+        )}
       </td>
       <td>
-        <input className="input select-sm" type="date" value={tarih} onChange={(e) => setTarih(e.target.value)} />
+        <input className="input select-sm" type="date" value={bas} onChange={(e) => setBas(e.target.value)} />
       </td>
-      {turler.map((t) => (
-        <td key={t.id}>
-          <input
-            className="input select-sm num"
-            inputMode="decimal"
-            style={{ textAlign: "right", width: "5.5rem" }}
-            value={fiyat[t.id] ?? ""}
-            onChange={(e) => setFiyat((s) => ({ ...s, [t.id]: e.target.value }))}
-          />
-        </td>
-      ))}
+      <td>
+        <input className="input select-sm" type="date" value={bit} onChange={(e) => setBit(e.target.value)} />
+      </td>
+      <td className="num">
+        <input
+          className="input select-sm num"
+          inputMode="decimal"
+          style={{ textAlign: "right", width: "5.5rem" }}
+          value={fiyat}
+          onChange={(e) => setFiyat(e.target.value)}
+        />
+      </td>
       <td>
         <div className="row-actions">
           <button
             className="btn btn-sm"
+            disabled={!dirty}
             onClick={() =>
               run(
                 () =>
-                  api.put(`/api/fiyat-listeleri/${f.id}`, {
-                    listeAdi,
-                    tarih,
-                    fiyatlar: turler.map((t) => ({ turId: t.id, fiyat: parseFiyat(fiyat[t.id] ?? "") })),
+                  api.put(`/api/fiyat-detaylari/${det.id}`, {
+                    baslangicTarihi: bas,
+                    bitisTarihi: bit,
+                    sayfaBasiFiyat: parseFiyat(fiyat),
                   }),
-                "Fiyat listesi güncellendi.",
+                "Fiyat güncellendi.",
                 onSaved,
               )
             }
@@ -293,17 +313,15 @@ function PriceRow({
           <button
             className="btn btn-sm btn-danger"
             onClick={() => {
-              if (confirm(`${f.listeAdi} listesi silinsin mi?`)) {
-                run(() => api.del(`/api/fiyat-listeleri/${f.id}`), "Fiyat listesi silindi.", onSaved);
+              if (confirm(`${d(det.baslangicTarihi)} – ${d(det.bitisTarihi)} fiyatı silinsin mi?`)) {
+                run(() => api.del(`/api/fiyat-detaylari/${det.id}`), "Fiyat silindi.", onSaved);
               }
             }}
           >
             Sil
           </button>
         </div>
-        <div className="muted small" style={{ marginTop: 3 }}>
-          {turler.map((t) => `${t.ad}: ${unit(parseFiyat(fiyat[t.id] ?? ""))}`).join(" · ")}
-        </div>
+        <div className="muted small" style={{ marginTop: 3 }}>{unit(parseFiyat(fiyat))} ₺</div>
       </td>
     </tr>
   );

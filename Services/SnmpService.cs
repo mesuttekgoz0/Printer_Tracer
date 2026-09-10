@@ -11,11 +11,13 @@ public class SnmpService : ISnmpService
 {
     private readonly SnmpOptions _options;
     private readonly ILogger<SnmpService> _logger;
+    private readonly int _retries;
 
-    public SnmpService(IOptions<PrinterMonitoringOptions> options, ILogger<SnmpService> logger)
+    public SnmpService(IOptions<SnmpOptions> options, ILogger<SnmpService> logger)
     {
-        _options = options.Value.Snmp;
+        _options = options.Value;
         _logger = logger;
+        _retries = Math.Max(0, _options.Retries);
     }
 
     public async Task<long?> GetPageCountAsync(string ipAddress, CancellationToken cancellationToken = default)
@@ -58,7 +60,7 @@ public class SnmpService : ISnmpService
 
         foreach (var version in order)
         {
-            var value = (await GetSingleAsync(version, endpoint, community, SysDescrOid, cancellationToken))?.Value;
+            var value = (await GetIdentityAsync(version, endpoint, community, SysDescrOid, cancellationToken))?.Value;
             var cleaned = CleanModel(value);
             if (cleaned is not null)
                 return cleaned;
@@ -84,56 +86,22 @@ public class SnmpService : ISnmpService
     private async Task<long?> TryGetAsync(
         VersionCode version, IPEndPoint endpoint, string ipAddress, CancellationToken cancellationToken)
     {
-        try
+        // GetSingleAsync geçici hatalarda kendi içinde birkaç kez dener (UDP paket kaybı).
+        var v = await GetSingleAsync(version, endpoint, new OctetString(_options.Community),
+            _options.PageCountOid, _options.TimeoutSeconds * 1000, cancellationToken, _retries);
+
+        if (v?.Value is null)
         {
-            var variables = new List<Variable> { new(new ObjectIdentifier(_options.PageCountOid)) };
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
-
-            var result = await Messenger
-                .GetAsync(version, endpoint, new OctetString(_options.Community), variables)
-                .WaitAsync(cts.Token);
-
-            var data = result.FirstOrDefault()?.Data;
-            if (data is null)
-            {
-                _logger.LogDebug("{Ip} ({Version}): SNMP yanıtı boş.", ipAddress, version);
-                return null;
-            }
-
-            if (long.TryParse(data.ToString(), out var pageCount))
-                return pageCount;
-
-            _logger.LogDebug(
-                "{Ip} ({Version}): sayaç değeri sayıya çevrilemedi: {Raw} ({Type})",
-                ipAddress, version, data, data.TypeCode);
+            _logger.LogDebug("{Ip} ({Version}): sayaç yanıtı yok.", ipAddress, version);
             return null;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw; // uygulama kapanıyor — üst katmana bırak
-        }
-        catch (OperationCanceledException)
-        {
-            // Zaman aşımı (yazıcı ulaşılamaz / SNMP kapalı / yanlış IP) — beklenen durum.
-            _logger.LogDebug("{Ip} ({Version}): yanıt yok — zaman aşımı ({Timeout}sn).",
-                ipAddress, version, _options.TimeoutSeconds);
-            return null;
-        }
-        catch (Lextm.SharpSnmpLib.Messaging.ErrorException ex)
-        {
-            // Yazıcı cevap verdi ama OID'i tanımıyor (NoSuchName vb.) — stack trace'e gerek yok.
-            _logger.LogDebug("{Ip} ({Version}): SNMP hata yanıtı — {Message}",
-                ipAddress, version, ex.Message.Split('\n')[0]);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("{Ip} ({Version}): SNMP okuması başarısız — {Error}",
-                ipAddress, version, ex.Message);
-            return null;
-        }
+
+        if (long.TryParse(v.Value, out var pageCount))
+            return pageCount;
+
+        _logger.LogDebug("{Ip} ({Version}): sayaç değeri sayıya çevrilemedi: {Raw} ({Type})",
+            ipAddress, version, v.Value, v.Type);
+        return null;
     }
 
     // Bilinen "toplam sayfa" OID adayları. Brand=null → markadan bağımsız (evrensel), her yazıcıda denenir.
@@ -207,14 +175,14 @@ public class SnmpService : ISnmpService
         // 1) Kimlik + hangi sürüm cevap veriyor?
         foreach (var version in new[] { VersionCode.V2, VersionCode.V1 })
         {
-            var descr = await GetSingleAsync(version, endpoint, community, SysDescrOid, ct);
+            var descr = await GetIdentityAsync(version, endpoint, community, SysDescrOid, ct);
             if (descr is null)
                 continue;
 
             result.Reachable = true;
             result.RespondingVersion = version == VersionCode.V2 ? "V2c" : "V1";
             result.SysDescr = descr.Value;
-            result.SysName = (await GetSingleAsync(version, endpoint, community, SysNameOid, ct))?.Value;
+            result.SysName = (await GetIdentityAsync(version, endpoint, community, SysNameOid, ct))?.Value;
             result.Messages.Add($"SNMP {result.RespondingVersion} ile yanıt alındı.");
             break;
         }
@@ -248,6 +216,13 @@ public class SnmpService : ISnmpService
         foreach (var (oid, label, brand) in relevantOids)
         {
             var v = await GetSingleAsync(respondingVersion, endpoint, community, oid, ct);
+
+            // Markadan bağımsız (evrensel) OID'i her zaman göster — "denedik, sonuç bu" bilgisi.
+            // Marka-özel OID'i ise SADECE bir değer döndüyse göster; boş dönen marka OID'i satırı
+            // tabloda gereksiz gürültü ("çıktısı yok" satırı) yaratıyordu.
+            if (brand is not null && v?.Value is null)
+                continue;
+
             result.Probes.Add(new SnmpOidValue
             {
                 Oid = oid,
@@ -346,32 +321,117 @@ public class SnmpService : ISnmpService
         return null;
     }
 
-    private async Task<SnmpOidValue?> GetSingleAsync(
-        VersionCode version, IPEndPoint endpoint, OctetString community, string oid, CancellationToken outerToken)
+    public async Task<SnmpQuickProbe?> QuickProbeAsync(string ipAddress, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        try
+        if (!IPAddress.TryParse(ipAddress, out var ip))
+            return null;
+
+        var endpoint = new IPEndPoint(ip, _options.Port);
+        var community = new OctetString(_options.Community);
+        var primary = ParseVersion(_options.Version);
+        var order = primary == VersionCode.V1
+            ? new[] { VersionCode.V1, VersionCode.V2 }
+            : new[] { VersionCode.V2, VersionCode.V1 };
+
+        foreach (var version in order)
         {
-            var vars = new List<Variable> { new(new ObjectIdentifier(oid)) };
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
-
-            var res = await Messenger.GetAsync(version, endpoint, community, vars).WaitAsync(cts.Token);
-            var data = res.FirstOrDefault()?.Data;
-            if (data is null || data.TypeCode is SnmpType.NoSuchObject or SnmpType.NoSuchInstance or SnmpType.EndOfMibView)
-                return null;
-
-            return new SnmpOidValue
+            SnmpOidValue? descr;
+            try
             {
-                Oid = oid,
-                Type = data.TypeCode.ToString(),
-                Value = data.ToString(),
+                descr = await GetSingleAsync(version, endpoint, community, SysDescrOid, timeoutMs, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            if (descr?.Value is null)
+                continue; // bu sürümle yanıt yok — diğerini dene
+
+            var sysName = (await GetSingleAsync(version, endpoint, community, SysNameOid, timeoutMs, cancellationToken))?.Value;
+            var counter = await GetSingleAsync(version, endpoint, community, _options.PageCountOid, timeoutMs, cancellationToken);
+
+            return new SnmpQuickProbe
+            {
+                IpAddress = ipAddress,
+                RespondingVersion = version == VersionCode.V1 ? "V1" : "V2c",
+                SysDescr = CleanModel(descr.Value),
+                SysName = string.IsNullOrWhiteSpace(sysName) ? null : sysName.Trim(),
+                HasPageCounter = counter?.Value is not null && long.TryParse(counter.Value, out _),
+                DetectedBrand = DetectBrand(descr.Value, sysName),
             };
         }
-        catch
+
+        return null;
+    }
+
+    private Task<SnmpOidValue?> GetSingleAsync(
+        VersionCode version, IPEndPoint endpoint, OctetString community, string oid, CancellationToken outerToken)
+        => GetSingleAsync(version, endpoint, community, oid, _options.TimeoutSeconds * 1000, outerToken, _retries);
+
+    /// <summary>sysDescr/sysName gibi kimlik OID'leri için: boş dönerse de tekrar dener.</summary>
+    private Task<SnmpOidValue?> GetIdentityAsync(
+        VersionCode version, IPEndPoint endpoint, OctetString community, string oid, CancellationToken outerToken)
+        => GetSingleAsync(version, endpoint, community, oid, _options.TimeoutSeconds * 1000, outerToken, _retries, retryOnEmpty: true);
+
+    /// <summary>
+    /// Tek OID GET. Geçici hatalarda (UDP paket kaybı / zaman aşımı) <paramref name="retries"/>
+    /// kez daha dener. Cihaz "OID yok" derse (NoSuchObject/NoSuchInstance/EndOfMibView) —
+    /// bu kesin bir yanıttır — tekrar denemez, <c>null</c> döner.
+    /// </summary>
+    private async Task<SnmpOidValue?> GetSingleAsync(
+        VersionCode version, IPEndPoint endpoint, OctetString community, string oid,
+        int timeoutMs, CancellationToken outerToken, int retries = 0, bool retryOnEmpty = false)
+    {
+        for (var attempt = 0; ; attempt++)
         {
-            // Zaman aşımı, erişilemez host, hata yanıtı — tanılamada hepsi "yanıt yok" demektir.
-            return null;
+            try
+            {
+                var vars = new List<Variable> { new(new ObjectIdentifier(oid)) };
+
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
+                cts.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
+
+                var res = await Messenger.GetAsync(version, endpoint, community, vars).WaitAsync(cts.Token);
+                var data = res.FirstOrDefault()?.Data;
+                if (data is null || data.TypeCode is SnmpType.NoSuchObject or SnmpType.NoSuchInstance or SnmpType.EndOfMibView)
+                    return null; // kesin cevap: OID yok — tekrar deneme
+
+                var text = data.ToString();
+
+                // Bazı yazıcılar (ör. bazı Olivetti'ler) sysDescr'ı ara sıra BOŞ döndürür —
+                // geçerli bir SNMP yanıtı ama işe yaramaz. retryOnEmpty ise tekrar dene.
+                if (retryOnEmpty && string.IsNullOrWhiteSpace(text) && attempt < retries)
+                {
+                    await Task.Delay(150 * (attempt + 1), outerToken);
+                    continue;
+                }
+
+                return new SnmpOidValue
+                {
+                    Oid = oid,
+                    Type = data.TypeCode.ToString(),
+                    Value = text,
+                };
+            }
+            catch (OperationCanceledException) when (outerToken.IsCancellationRequested)
+            {
+                throw; // uygulama/istek iptal edildi — üst katmana bırak
+            }
+            catch (Exception ex) when (attempt < retries)
+            {
+                // Zaman aşımı / düşen UDP pakedi / geçici hata — kısa bekle, tekrar dene.
+                _logger.LogDebug("{Ip} {Oid} ({Ver}) deneme {N} başarısız ({Err}) — yeniden.",
+                    endpoint.Address, oid, version, attempt + 1, ex.GetType().Name);
+                try { await Task.Delay(150 * (attempt + 1), outerToken); }
+                catch (OperationCanceledException) { return null; }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("{Ip} {Oid} ({Ver}): yanıt yok ({Err}).",
+                    endpoint.Address, oid, version, ex.GetType().Name);
+                return null;
+            }
         }
     }
 

@@ -42,7 +42,7 @@ public class HakedislerApiController : ControllerBase
     {
         return await _db.Tedarikciler.AsNoTracking()
             .OrderBy(t => t.Ad)
-            .Select(t => new TedarikciSecDto(t.Id, t.Ad, t.Printers.Count, t.FiyatListeleri.Any()))
+            .Select(t => new TedarikciSecDto(t.Id, t.Ad, t.Printers.Count, t.Fiyatlar.Any()))
             .ToListAsync();
     }
 
@@ -61,14 +61,14 @@ public class HakedislerApiController : ControllerBase
             return Problem($"\"{tedarikci.Ad}\" tedarikçisine bağlı yazıcı yok.", statusCode: 400);
 
         var today = DateOnly.FromDateTime(DateTime.Now);
-        var priceList = await ResolvePriceListAsync(req.TedarikciId, today);
+        var hasAnyFiyat = await _db.Fiyatlar.AnyAsync(f => f.TedarikciId == req.TedarikciId);
 
         var warnings = new List<string>();
         var skipped = new List<string>();
         var rows = new List<TaslakRowDto>();
 
-        if (priceList is null)
-            warnings.Add($"\"{tedarikci.Ad}\" tedarikçisinin fiyat listesi yok — tüm tutarlar 0 gelir.");
+        if (!hasAnyFiyat)
+            warnings.Add($"\"{tedarikci.Ad}\" tedarikçisi için tanımlı fiyat yok — tüm tutarlar 0 gelir.");
 
         foreach (var printer in printers)
         {
@@ -110,11 +110,15 @@ public class HakedislerApiController : ControllerBase
                 first = true;
             }
 
-            var unitPrice = printer.TurId is int tid ? priceList?.FiyatBul(tid) ?? 0m : 0m;
+            decimal unitPrice = 0m;
+            string? priceNote = null;
+            if (printer.TurId is int tid)
+                (unitPrice, priceNote) = await ResolveUnitPriceAsync(req.TedarikciId, tid, today);
+
             if (printer.TurId is null)
                 warnings.Add($"{printer.Name}: türü belirtilmemiş — fiyat uygulanamadı (0).");
-            else if (priceList is not null && unitPrice == 0m)
-                warnings.Add($"{printer.Name}: fiyat listesinde \"{printer.TurAdi}\" için fiyat yok (0).");
+            else if (unitPrice == 0m)
+                warnings.Add($"{printer.Name} (\"{printer.TurAdi}\"): {priceNote ?? "geçerli fiyat yok"} (0).");
 
             rows.Add(new TaslakRowDto(
                 printer.Id, printer.Name, printer.Model, printer.TurId, printer.TurAdi,
@@ -129,7 +133,6 @@ public class HakedislerApiController : ControllerBase
 
         return new HakedisTaslakDto(
             tedarikci.Id, tedarikci.Ad,
-            priceList is null ? null : $"{priceList.ListeAdi} ({priceList.Tarih:dd.MM.yyyy})",
             periodStart, today, rows, skipped, warnings);
     }
 
@@ -141,8 +144,17 @@ public class HakedislerApiController : ControllerBase
 
         var year = req.PeriodEnd == default ? DateTime.Now.Year : req.PeriodEnd.Year;
         var prefix = $"{year}-";
-        var used = await _db.Hakedisler.CountAsync(h => h.Number.StartsWith(prefix));
-        var number = $"{prefix}{used + 1:D4}";
+        // Numara adet değil, o yıl içindeki EN YÜKSEK sıra + 1'den üretilir; arada silinmiş
+        // kayıt olsa bile (numarada boşluk) mevcut bir numarayı tekrar üretmeyiz.
+        var mevcutNumaralar = await _db.Hakedisler
+            .Where(h => h.Number.StartsWith(prefix))
+            .Select(h => h.Number)
+            .ToListAsync();
+        var sonSira = mevcutNumaralar
+            .Select(n => int.TryParse(n.Substring(prefix.Length), out var s) ? s : 0)
+            .DefaultIfEmpty(0)
+            .Max();
+        var number = $"{prefix}{sonSira + 1:D4}";
 
         var tedarikciAd = req.TedarikciId > 0
             ? await _db.Tedarikciler.Where(t => t.Id == req.TedarikciId).Select(t => t.Ad).FirstOrDefaultAsync()
@@ -253,17 +265,42 @@ public class HakedislerApiController : ControllerBase
         return NoContent();
     }
 
-    private async Task<FiyatListesi?> ResolvePriceListAsync(int tedarikciId, DateOnly asOf)
+    /// <summary>
+    /// (Tedarikçi, tür) için <paramref name="asOf"/> tarihini kapsayan fiyat detayının
+    /// sayfa-başı fiyatı. Master yoksa / kapsayan detay yoksa 0. Birden çok kapsıyorsa
+    /// en yeni başlangıçlı.
+    /// </summary>
+    /// <summary>
+    /// (Tedarikçi, tür) için <paramref name="asOf"/> tarihini kapsayan fiyat detayının fiyatı.
+    /// Fiyat 0 ise <c>Note</c> nedeni açıklar (tanımlı değil / tarih aralığı kapsamıyor).
+    /// </summary>
+    private async Task<(decimal Price, string? Note)> ResolveUnitPriceAsync(int tedarikciId, int turId, DateOnly asOf)
     {
-        var list = await _db.FiyatListeleri.AsNoTracking().Include(f => f.Satirlar)
-            .Where(f => f.TedarikciId == tedarikciId && f.Tarih <= asOf)
-            .OrderByDescending(f => f.Tarih).ThenByDescending(f => f.Id)
+        var fiyatId = await _db.Fiyatlar.AsNoTracking()
+            .Where(f => f.TedarikciId == tedarikciId && f.TurId == turId)
+            .Select(f => (int?)f.Id)
             .FirstOrDefaultAsync();
-        list ??= await _db.FiyatListeleri.AsNoTracking().Include(f => f.Satirlar)
-            .Where(f => f.TedarikciId == tedarikciId)
-            .OrderBy(f => f.Tarih).ThenBy(f => f.Id)
-            .FirstOrDefaultAsync();
-        return list;
+        if (fiyatId is null)
+            return (0m, "bu tür için tanımlı fiyat yok");
+
+        var detaylar = await _db.FiyatDetaylari.AsNoTracking()
+            .Where(d => d.FiyatId == fiyatId)
+            .OrderByDescending(d => d.BaslangicTarihi).ThenByDescending(d => d.Id)
+            .Select(d => new { d.BaslangicTarihi, d.BitisTarihi, d.SayfaBasiFiyat })
+            .ToListAsync();
+
+        var match = detaylar.FirstOrDefault(d => d.BaslangicTarihi <= asOf && asOf <= d.BitisTarihi);
+        if (match is not null)
+            return (match.SayfaBasiFiyat, null);
+
+        if (detaylar.Count > 0)
+        {
+            var ranges = string.Join(", ", detaylar.Select(d =>
+                $"{d.BaslangicTarihi:dd.MM.yyyy}–{d.BitisTarihi:dd.MM.yyyy}"));
+            return (0m, $"fiyat tanımlı ama tarih aralığı ({ranges}) {asOf:dd.MM.yyyy} tarihini kapsamıyor");
+        }
+
+        return (0m, "bu tür için fiyat detayı girilmemiş");
     }
 }
 
@@ -276,7 +313,7 @@ public record TedarikciSecDto(int Id, string Ad, int PrinterCount, bool HasPrice
 public record TaslakRequest(int TedarikciId);
 
 public record HakedisTaslakDto(
-    int TedarikciId, string TedarikciAd, string? FiyatListesiBilgi,
+    int TedarikciId, string TedarikciAd,
     DateOnly PeriodStart, DateOnly PeriodEnd,
     IReadOnlyList<TaslakRowDto> Rows, IReadOnlyList<string> Skipped, IReadOnlyList<string> Warnings);
 

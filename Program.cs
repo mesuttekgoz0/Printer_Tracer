@@ -28,18 +28,24 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("AppDb")
                       ?? "Data Source=yazicitakip.db"));
 
-builder.Services.Configure<PrinterMonitoringOptions>(
-    builder.Configuration.GetSection(PrinterMonitoringOptions.SectionName));
+builder.Services.Configure<SnmpOptions>(
+    builder.Configuration.GetSection(SnmpOptions.SectionName));
 
 builder.Services.Configure<HakedisOptions>(
     builder.Configuration.GetSection(HakedisOptions.SectionName));
 
 builder.Services.AddSingleton<ISnmpService, SnmpService>();
-builder.Services.AddScoped<SampleDataSeeder>();
 builder.Services.AddScoped<PrinterReadingService>();
-builder.Services.AddHostedService<PrinterMonitorWorker>();
+builder.Services.AddScoped<PrinterDiscoveryService>();
 
 var app = builder.Build();
+
+// Açılışta bekleyen EF Core migration'larını uygula (DB dosyası yoksa oluşturur).
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
+}
 
 app.UseExceptionHandler();
 

@@ -144,7 +144,6 @@ function Review({ taslak, onCancel, onSaved }: { taslak: HakedisTaslak; onCancel
           <h1>Hakediş Oluştur</h1>
           <p className="muted small">
             Tedarikçi: <strong>{taslak.tedarikciAd}</strong>
-            {taslak.fiyatListesiBilgi && <> · Fiyat listesi: <strong>{taslak.fiyatListesiBilgi}</strong></>}
           </p>
         </div>
         <button className="btn btn-sm" onClick={onCancel}>Vazgeç</button>

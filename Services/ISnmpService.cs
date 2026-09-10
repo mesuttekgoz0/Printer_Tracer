@@ -29,4 +29,10 @@ public interface ISnmpService
     /// bir OID'i elle denemek için kullanılır. Ulaşılamazsa/OID yoksa <c>null</c> döner.
     /// </summary>
     Task<SnmpOidValue?> ProbeOidAsync(string ipAddress, string oid, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ağ taraması için hızlı yoklama: kısa timeout ile önce <c>sysDescr</c>, yanıt varsa
+    /// <c>sysName</c> + standart sayfa-sayacı OID'i sorgulanır. SNMP'ye hiç yanıt yoksa <c>null</c>.
+    /// </summary>
+    Task<SnmpQuickProbe?> QuickProbeAsync(string ipAddress, int timeoutMs, CancellationToken cancellationToken = default);
 }

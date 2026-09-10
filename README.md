@@ -8,7 +8,7 @@ sunan bir uygulama.
 
 | Parça | Ne | Klasör | Port |
 |-------|-----|--------|------|
-| **Backend** | ASP.NET Core JSON API + SNMP + arka plan toplayıcı + SQLite | proje kökü | `5239` |
+| **Backend** | ASP.NET Core JSON API + SNMP + SQLite | proje kökü | `5239` |
 | **Frontend** | Next.js (App Router, TypeScript) | `web/` | `3000` |
 
 Frontend, backend'in `/api/**` uçlarını çağırır (CORS ile). Backend hiçbir HTML
@@ -36,16 +36,18 @@ sayfa sayısını verir.
   dondurulur; yazdırılabilir (PDF) ve CSV indirilir.
 - **SNMP Tanılama** – bir IP'ye GET/WALK yapıp `sysDescr`, `sysName`, marka ve
   doğru sayfa-sayacı OID'ini önerir.
-- **Arka plan toplayıcı** (`PrinterMonitorWorker`) – `PollingEnabled=true` ise
-  yapılandırılan aralıkta otomatik okur. Varsayılan **kapalı**; açılışta yalnızca
-  DB migration'ını çalıştırır.
-- **SNMP v2c / v1** – önce v2c (`public`), başarısızsa v1.
+- **Ağı Tara** – yerel alt ağı SNMP ile tarayıp bulunan yazıcıları listeler,
+  tek tıkla ekler (Yazıcılar sayfası).
+- **SNMP v2c / v1** – önce v2c (`public`), başarısızsa v1. Geçici UDP paket
+  kaybına karşı yeniden deneme (`Snmp:Retries`).
+- Okumalar **yalnızca elle** yapılır (arka planda periyodik toplama yoktur);
+  `dotnet run` açılışta sadece bekleyen EF migration'larını uygular.
 
 ## Teknoloji
 
 | Alan | Kullanılan |
 |------|------------|
-| Backend | .NET 9, ASP.NET Core Web API + `BackgroundService` |
+| Backend | .NET 9, ASP.NET Core Web API |
 | SNMP | [`Lextm.SharpSnmpLib`](https://www.nuget.org/packages/Lextm.SharpSnmpLib) 12.5.7 |
 | Veritabanı | SQLite + Entity Framework Core 9 |
 | API dokümantasyonu | Swagger / OpenAPI (`/swagger`, yalnız Development) |
@@ -55,15 +57,15 @@ sayfa sayısını verir.
 
 ```
 YaziciTakip/
-├── Program.cs                  # DI, CORS, Swagger, hosted service
+├── Program.cs                  # DI, CORS, Swagger, açılışta EF migration
 ├── appsettings.json            # SNMP ayarları, CORS origin'leri, Hakediş firma bilgisi
-├── Configuration/              # PrinterMonitoringOptions, HakedisOptions
+├── Configuration/              # SnmpOptions, HakedisOptions
 ├── Models/                     # Entity'ler: Printer, PrintReading, Tur, Tedarikci,
-│                               #   FiyatListesi, Hakedis (+ ManualReadResult, SnmpDiagnosticResult)
+│                               #   Fiyat/FiyatDetay, Hakedis (+ ManualReadResult, SnmpDiagnosticResult)
 ├── Data/                       # AppDbContext, design-time factory, Migrations
-├── Services/                   # SnmpService, PrinterReadingService, PrinterMonitorWorker, SampleDataSeeder
+├── Services/                   # SnmpService, PrinterReadingService, PrinterDiscoveryService
 ├── Controllers/Api/            # PrintersApi, ReadingsApi, ReportApi, TedarikcilerApi,
-│                               #   HakedislerApi, DiagnosticsApi, LookupsApi
+│                               #   HakedislerApi, DiagnosticsApi, DiscoveryApi, LookupsApi
 └── web/                        # Next.js frontend
     ├── app/                    # sayfalar: yazicilar, sayac-oku, rapor, tedarikciler[/id],
     │                           #   hakedisler[/yeni,/id], snmp-tanilama
@@ -97,44 +99,26 @@ Frontend'in backend adresi `web/.env.local` içindeki `NEXT_PUBLIC_API_BASE`
 (varsayılan `http://localhost:5239`). Backend'in kabul ettiği frontend origin'i
 `appsettings.json` → `Cors:Origins` (varsayılan `http://localhost:3000`).
 
-### Arayüzü örnek veriyle denemek
-
-Gerçek yazıcı olmadan raporları görmek için Development ortamında,
-`appsettings.Development.json` içinde:
-
-```json
-"PrinterMonitoring": { "SeedSampleReadings": true }
-```
-
-ayarlanıp backend çalıştırılır (yalnızca `PrintReadings` tablosu boşken üretir).
-
 ## Yapılandırma (`appsettings.json`)
 
 ```jsonc
 "Cors": { "Origins": [ "http://localhost:3000" ] },   // frontend origin(ler)i
 "Hakedis": { "FromCompany": "", "ToCompany": "" },     // belgede gösterilen firma bilgisi (boş = gizli)
-"PrinterMonitoring": {
-  "PollingEnabled": false,               // true ise arka planda periyodik okuma
-  "PollingIntervalMinutes": 1440,
-  "Snmp": {
-    "Community": "public",
-    "Version": "V2c",                    // V2c | V1
-    "FallbackToV1": true,
-    "Port": 161,
-    "TimeoutSeconds": 5,
-    "PageCountOid": "1.3.6.1.2.1.43.10.2.1.4.1.1"
-  },
-  "SeedSampleReadings": false,
-  "SampleDataDays": 3,
-  "Printers": []                         // istenirse { "Name": "...", "IpAddress": "..." }
+"Snmp": {
+  "Community": "public",
+  "Version": "V2c",                     // V2c | V1
+  "FallbackToV1": true,
+  "Port": 161,
+  "TimeoutSeconds": 5,
+  "Retries": 2,                         // geçici UDP hatasında ek deneme
+  "PageCountOid": "1.3.6.1.2.1.43.10.2.1.4.1.1"
 }
 ```
 
 ### Yazıcı ekleme
 
-Frontend'deki **Yazıcılar** sayfasından ad + IP girilir; kayıt doğrudan
-veritabanına yazılır. Alternatif olarak `appsettings.json` → `Printers` dizisine
-eklenebilir; toplayıcı açılışta config ile veritabanını IP bazlı senkronize eder.
+Frontend'deki **Yazıcılar** sayfasından ad + IP girilir (ya da **Ağı Tara** ile
+bulunur); kayıt doğrudan veritabanına yazılır.
 
 Yeni bir yazıcının hangi OID'de sayaç tuttuğundan emin değilsen **SNMP Tanılama**
 sayfasını (ya da `GET /api/diagnostics?ip=<ip>`) kullan.

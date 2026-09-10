@@ -59,3 +59,22 @@ public class SnmpOidValue
     /// <summary>Bu OID'in ait olduğu marka (ör. "HP", "Samsung"). null ise markadan bağımsız (evrensel).</summary>
     public string? Brand { get; set; }
 }
+
+/// <summary>Ağ taramasında tek bir cihazın hızlı SNMP yoklaması sonucu.</summary>
+public class SnmpQuickProbe
+{
+    public string IpAddress { get; set; } = string.Empty;
+
+    /// <summary>SNMP'ye yanıt veren sürüm ("V2c" / "V1").</summary>
+    public string RespondingVersion { get; set; } = string.Empty;
+
+    public string? SysName { get; set; }
+
+    public string? SysDescr { get; set; }
+
+    /// <summary>Standart Printer-MIB sayfa sayacı OID'ine (prtMarkerLifeCount) yanıt verdi mi?</summary>
+    public bool HasPageCounter { get; set; }
+
+    /// <summary>sysDescr/sysName'den tespit edilen marka (varsa).</summary>
+    public string? DetectedBrand { get; set; }
+}

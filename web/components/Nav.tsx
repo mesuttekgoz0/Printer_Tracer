@@ -28,7 +28,21 @@ export function Nav() {
   return (
     <nav className="nav">
       <Link href="/yazicilar" className="brand">
-        <span className="brand-mark">YT</span>
+        <svg
+          className="brand-mark"
+          viewBox="0 0 58 58"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.3"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M17 5h24v13H17z" />
+          <path d="M9 18h40v20H9z" />
+          <path d="M17 38h24v15H17z" fill="var(--color-bg)" />
+          <path d="M23 44h12M23 49h8" stroke="var(--brand-accent, var(--color-accent))" strokeWidth="2.4" />
+          <circle cx="14.5" cy="26" r="2" fill="currentColor" stroke="none" />
+        </svg>
         Yazıcı Takip
       </Link>
 

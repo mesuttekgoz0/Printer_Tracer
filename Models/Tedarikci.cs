@@ -20,5 +20,5 @@ public class Tedarikci
 
     public List<Printer> Printers { get; set; } = new();
 
-    public List<FiyatListesi> FiyatListeleri { get; set; } = new();
+    public List<Fiyat> Fiyatlar { get; set; } = new();
 }

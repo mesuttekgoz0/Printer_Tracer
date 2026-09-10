@@ -25,6 +25,31 @@ export interface Printer {
   latestCounter: number | null;
 }
 
+/* ---- Ağ tarama ---- */
+export interface ScanSubnet {
+  cidr: string;
+  interfaceName: string;
+  serverIp: string;
+  hostCount: number;
+  scannable: boolean;
+  hasGateway: boolean;
+}
+
+export interface SubnetsResponse {
+  subnets: ScanSubnet[];
+  suggested: string | null;
+}
+
+export interface DiscoveredPrinter {
+  ipAddress: string;
+  sysName: string | null;
+  sysDescr: string | null;
+  snmpVersion: string;
+  hasPageCounter: boolean;
+  detectedBrand: string | null;
+  alreadyRegistered: boolean;
+}
+
 /* ---- Sayaç Oku ---- */
 export interface ReadingStatus {
   printerId: number;
@@ -89,8 +114,8 @@ export interface TedarikciList {
   ad: string;
   not: string | null;
   printerCount: number;
-  priceListCount: number;
-  latestPriceListDate: string | null;
+  fiyatSayisi: number;
+  detaySayisi: number;
 }
 
 export interface TedarikciPrinter {
@@ -100,18 +125,19 @@ export interface TedarikciPrinter {
   turAd: string;
 }
 
-export interface FiyatSatiri {
-  turId: number;
-  turAd: string;
+export interface FiyatDetay {
+  id: number;
+  baslangicTarihi: string;
+  bitisTarihi: string;
   sayfaBasiFiyat: number;
+  isCurrent: boolean;
 }
 
-export interface FiyatListesi {
+export interface Fiyat {
   id: number;
-  listeAdi: string;
-  tarih: string;
-  isCurrent: boolean;
-  satirlar: FiyatSatiri[];
+  turId: number;
+  turAd: string;
+  detaylar: FiyatDetay[];
 }
 
 export interface TedarikciDetail {
@@ -119,7 +145,7 @@ export interface TedarikciDetail {
   ad: string;
   not: string | null;
   printers: TedarikciPrinter[];
-  fiyatListeleri: FiyatListesi[];
+  fiyatlar: Fiyat[];
   turler: Option[];
 }
 
@@ -160,7 +186,6 @@ export interface TaslakRow {
 export interface HakedisTaslak {
   tedarikciId: number;
   tedarikciAd: string;
-  fiyatListesiBilgi: string | null;
   periodStart: string;
   periodEnd: string;
   rows: TaslakRow[];

@@ -19,9 +19,9 @@ public class AppDbContext : DbContext
 
     public DbSet<Tedarikci> Tedarikciler => Set<Tedarikci>();
 
-    public DbSet<FiyatListesi> FiyatListeleri => Set<FiyatListesi>();
+    public DbSet<Fiyat> Fiyatlar => Set<Fiyat>();
 
-    public DbSet<FiyatSatiri> FiyatSatirlari => Set<FiyatSatiri>();
+    public DbSet<FiyatDetay> FiyatDetaylari => Set<FiyatDetay>();
 
     public DbSet<Tur> Turler => Set<Tur>();
 
@@ -64,21 +64,26 @@ public class AppDbContext : DbContext
             .HasForeignKey(p => p.TedarikciId)
             .OnDelete(DeleteBehavior.SetNull);
 
-        // Fiyat listesi -> Tedarikçi. Tedarikçi silinince fiyat listeleri de silinir.
-        modelBuilder.Entity<FiyatListesi>()
+        // Fiyat master -> Tedarikçi. Tedarikçi silinince fiyatları da silinir.
+        modelBuilder.Entity<Fiyat>()
             .HasOne(f => f.Tedarikci)
-            .WithMany(t => t.FiyatListeleri)
+            .WithMany(t => t.Fiyatlar)
             .HasForeignKey(f => f.TedarikciId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        modelBuilder.Entity<FiyatListesi>()
-            .HasIndex(f => new { f.TedarikciId, f.Tarih });
+        // Her (tedarikçi, tür) için tek master.
+        modelBuilder.Entity<Fiyat>()
+            .HasIndex(f => new { f.TedarikciId, f.TurId })
+            .IsUnique();
 
-        modelBuilder.Entity<FiyatSatiri>()
-            .HasOne(s => s.FiyatListesi)
-            .WithMany(f => f.Satirlar)
-            .HasForeignKey(s => s.FiyatListesiId)
+        modelBuilder.Entity<FiyatDetay>()
+            .HasOne(d => d.Fiyat)
+            .WithMany(f => f.Detaylar)
+            .HasForeignKey(d => d.FiyatId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<FiyatDetay>()
+            .HasIndex(d => new { d.FiyatId, d.BaslangicTarihi });
 
         // Sabit tür (lookup) tablosu: 1 = Siyah-Beyaz, 2 = Renkli.
         modelBuilder.Entity<Tur>().HasData(
@@ -92,11 +97,17 @@ public class AppDbContext : DbContext
             .HasForeignKey(p => p.TurId)
             .OnDelete(DeleteBehavior.SetNull);
 
-        // Fiyat listesi satırı -> Tür (zorunlu FK). Tür silinemez (Restrict).
-        modelBuilder.Entity<FiyatSatiri>()
-            .HasOne(s => s.Tur)
+        // Fiyat master/detay -> Tür (zorunlu FK). Tür silinemez (Restrict).
+        modelBuilder.Entity<Fiyat>()
+            .HasOne(f => f.Tur)
             .WithMany()
-            .HasForeignKey(s => s.TurId)
+            .HasForeignKey(f => f.TurId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<FiyatDetay>()
+            .HasOne(d => d.Tur)
+            .WithMany()
+            .HasForeignKey(d => d.TurId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
