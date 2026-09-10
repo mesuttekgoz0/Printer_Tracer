@@ -5,8 +5,24 @@ using YaziciTakip.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-builder.Services.AddControllersWithViews();
+// Saf JSON API — Razor/MVC arayüzü Next.js'e (web/) taşındı.
+builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+
+// Next.js frontend'i (ayrı origin) API'yi çağırabilsin diye CORS.
+// İzin verilen origin'ler appsettings.json -> "Cors:Origins" (dizi); yoksa dev varsayılanı.
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
+                  ?? new[] { "http://localhost:3000" };
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("frontend", policy => policy
+        .WithOrigins(corsOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod());
+});
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("AppDb")
@@ -25,25 +41,25 @@ builder.Services.AddHostedService<PrinterMonitorWorker>();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (!app.Environment.IsDevelopment())
+app.UseExceptionHandler();
+
+if (app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Home/Error");
-    // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+else
+{
     app.UseHsts();
 }
 
 app.UseHttpsRedirection();
 app.UseRouting();
 
+app.UseCors("frontend");
+
 app.UseAuthorization();
 
-app.MapStaticAssets();
-
-app.MapControllerRoute(
-    name: "default",
-    pattern: "{controller=Readings}/{action=Index}/{id?}")
-    .WithStaticAssets();
-
+app.MapControllers();
 
 app.Run();

@@ -1,9 +1,18 @@
 # Printer_Tracer (Yazıcı Takip Sistemi)
 
 Ağa **doğrudan bağlı** (print server olmadan) yazıcıların sayfa sayacını SNMP ile
-okuyup SQLite'a kaydeden ve bu veriyi rapor/grafik olarak sunan bir ASP.NET Core
-web uygulaması. Okuma, arayüzdeki **"Sayaç Oku"** düğmesiyle kullanıcı istediğinde
-yapılır; istenirse (`PollingEnabled=true`) belirli aralıklarla otomatik de çalışabilir.
+okuyup SQLite'a kaydeden, bu veriyi rapor ve sayfa-başı hakediş belgesi olarak
+sunan bir uygulama.
+
+İki parçadan oluşur:
+
+| Parça | Ne | Klasör | Port |
+|-------|-----|--------|------|
+| **Backend** | ASP.NET Core JSON API + SNMP + arka plan toplayıcı + SQLite | proje kökü | `5239` |
+| **Frontend** | Next.js (App Router, TypeScript) | `web/` | `3000` |
+
+Frontend, backend'in `/api/**` uçlarını çağırır (CORS ile). Backend hiçbir HTML
+sunmaz; sadece JSON.
 
 Print server olmadığı için kullanıcı/IP bazlı "kim ne bastı" bilgisi alınamaz;
 takip edilen tek şey her yazıcının **toplam sayfa sayacı** (Printer-MIB
@@ -12,111 +21,108 @@ sayfa sayısını verir.
 
 ## Özellikler
 
-- **"Sayaç Oku" sayfası** (`/Readings`, menüde "Sayaç Oku") – tek düğmeyle tüm
-  yazıcıların ya da tabloda seçilenlerin o anki sayacı paralel okunur. Her yazıcı
-  için marka/model (SNMP `sysDescr`, ilk okumada otomatik doldurulur), önceki
-  sayaç, son sayaç ve aradaki fark (önceki okumadan bu yana basılan sayfa) sürekli
-  tabloda durur; okuma sonrası sayfa PRG ile yenilenir.
+- **Sayaç Oku** – tek düğmeyle tüm ya da seçili yazıcıların o anki sayacı paralel
+  okunur. Her yazıcı için marka/model (SNMP `sysDescr`, ilk okumada otomatik),
+  önceki/son sayaç ve fark.
+- **Rapor** – tarih aralığındaki tek tek okumalar + farkları, dönem toplamı,
+  yazıcı bazında toplam. Aylık rapor buradan alınır.
+- **Yazıcılar** – ekleme / yeniden adlandırma / silme; tür (siyah-beyaz / renkli)
+  ve tedarikçi ataması. Doğrudan DB'ye yazar.
+- **Tedarikçiler** – yazıcı servis/bayi firmaları ve tarihli sayfa-başı fiyat
+  listeleri (tür başına ₺/sayfa).
+- **Hakedişler** – bir tedarikçi seçilir, o tedarikçinin tüm yazıcıları için
+  "önceki sayaç / şimdiki sayaç / fark / tutar" belgesi üretilir. Tutar =
+  fiyat listesinden çekilen sayfa-başı fiyat × sayfa sayısı. Belge numaralanıp
+  dondurulur; yazdırılabilir (PDF) ve CSV indirilir.
+- **SNMP Tanılama** – bir IP'ye GET/WALK yapıp `sysDescr`, `sysName`, marka ve
+  doğru sayfa-sayacı OID'ini önerir.
 - **Arka plan toplayıcı** (`PrinterMonitorWorker`) – `PollingEnabled=true` ise
-  yapılandırılan aralıkta tüm yazıcıları dolaşıp sayaç değerini okur. Varsayılan
-  olarak **kapalıdır**; açılışta yalnızca veritabanı migration'ını çalıştırır.
-- **SNMP v2c / v1** – önce v2c (`public` community) denenir, başarısız olursa
-  otomatik v1'e düşer (config'den kapatılabilir).
-- **Yazıcı yönetimi arayüzü** (`/Printers`, menüde "Yazıcılar") – yazıcı ekleme / yeniden adlandırma
-  / silme; doğrudan veritabanına yazar, `appsettings.json` düzenlemek gerekmez.
-- **Hakedişler** (`/Hakedis`, menüde "Hakedişler") – Sayaç Oku'da yazıcı seçip
-  "Hakediş oluştur" ile sayfa-başı fatura belgesi üretilir: her yazıcı için
-  marka/model, önceki sayaç, şimdiki sayaç, fark. "Önceki sayaç" bir önceki
-  hakedişten gelir (fazladan okuma belgeyi bozmaz), ilk hakedişte elle düzeltilebilir.
-  Kaydedilen belge numaralanır, dondurulur; yazdırılabilir (PDF) ve CSV olarak indirilir.
-- **Rapor** (`/Report/Summary`, menüde "Rapor") – tarih aralığı seçilir (varsayılan:
-  içinde bulunulan ayın 1'inden bugüne; 7/30/90 gün kısayolları). Aralıktaki tek tek
-  okumalar en yeni önce listelenir; her satırda bir önceki okumaya göre fark
-  (`+N` / `0` / `–`). Ayrıca dönem toplamı, okuma sayısı ve yazıcı bazında dönem
-  toplamı gösterilir — aylık rapor doğrudan bu sayfadan alınır.
-- **SNMP Tanılama sayfası** (`/Diagnostics?ip=<ip>`) – bir yazıcıya GET/WALK yapıp
-  `sysDescr`, `sysName`, bilinen sayfa-sayacı OID'leri ve `prtMarkerLifeCount`
-  alt ağacını gösterir; marka tespiti yapıp doğru `PageCountOid`'i önerir. Yeni
-  bir yazıcı bağlandığında doğru OID'i bulmak için kullanılır.
-- **Örnek veri üreteci** (`SampleDataSeeder`) – yalnızca Development ortamında ve
-  yalnızca tablo boşsa, arayüzü denemek için ~3 günlük sahte okuma üretir. Gerçek
-  veriyi asla ezmez, üretimde kapalıdır.
-- Config'den silinen yazıcı veritabanında kalır, geçmiş verisi korunur.
+  yapılandırılan aralıkta otomatik okur. Varsayılan **kapalı**; açılışta yalnızca
+  DB migration'ını çalıştırır.
+- **SNMP v2c / v1** – önce v2c (`public`), başarısızsa v1.
 
 ## Teknoloji
 
 | Alan | Kullanılan |
 |------|------------|
-| Platform | .NET 9, C# |
-| Web | ASP.NET Core MVC (Web App + `BackgroundService` bir arada) |
+| Backend | .NET 9, ASP.NET Core Web API + `BackgroundService` |
 | SNMP | [`Lextm.SharpSnmpLib`](https://www.nuget.org/packages/Lextm.SharpSnmpLib) 12.5.7 |
-| Veritabanı | SQLite + Entity Framework Core 9 (`Microsoft.EntityFrameworkCore.Sqlite` / `.Design`) |
-| Arayüz | Razor Views, Bootstrap 5, jQuery |
+| Veritabanı | SQLite + Entity Framework Core 9 |
+| API dokümantasyonu | Swagger / OpenAPI (`/swagger`, yalnız Development) |
+| Frontend | Next.js 16 (App Router), TypeScript, düz CSS |
 
 ## Proje Yapısı
 
 ```
 YaziciTakip/
-├── Program.cs                       # DI, DbContext, hosted service kaydı
-├── appsettings.json                # SNMP ayarları, okuma aralığı, yazıcı listesi
-├── Configuration/
-│   └── PrinterMonitoringOptions.cs
-├── Models/                         # Printer, PrintReading, rapor view-model'leri
-├── Data/
-│   ├── AppDbContext.cs
-│   ├── AppDbContextFactory.cs      # design-time factory (EF komutları için)
-│   └── Migrations/                 # InitialCreate
-├── Services/
-│   ├── ISnmpService.cs / SnmpService.cs      # SNMP GET / WALK / tanılama
-│   ├── PrinterMonitorWorker.cs               # periyodik toplayıcı
-│   └── SampleDataSeeder.cs
-├── Controllers/                    # Home, Printers, Report, Diagnostics
-└── Views/
+├── Program.cs                  # DI, CORS, Swagger, hosted service
+├── appsettings.json            # SNMP ayarları, CORS origin'leri, Hakediş firma bilgisi
+├── Configuration/              # PrinterMonitoringOptions, HakedisOptions
+├── Models/                     # Entity'ler: Printer, PrintReading, Tur, Tedarikci,
+│                               #   FiyatListesi, Hakedis (+ ManualReadResult, SnmpDiagnosticResult)
+├── Data/                       # AppDbContext, design-time factory, Migrations
+├── Services/                   # SnmpService, PrinterReadingService, PrinterMonitorWorker, SampleDataSeeder
+├── Controllers/Api/            # PrintersApi, ReadingsApi, ReportApi, TedarikcilerApi,
+│                               #   HakedislerApi, DiagnosticsApi, LookupsApi
+└── web/                        # Next.js frontend
+    ├── app/                    # sayfalar: yazicilar, sayac-oku, rapor, tedarikciler[/id],
+    │                           #   hakedisler[/yeni,/id], snmp-tanilama
+    ├── components/             # her sayfanın client bileşeni + Nav
+    └── lib/                    # api.ts (fetch sarmalayıcı), types.ts, format.ts
 ```
 
 ## Çalıştırma
 
-Gereksinim: [.NET 9 SDK](https://dotnet.microsoft.com/download).
+Gereksinim: [.NET 9 SDK](https://dotnet.microsoft.com/download) + [Node.js 20+](https://nodejs.org).
 
 ```bash
 git clone https://github.com/mesuttekgoz0/Printer_Tracer.git
 cd Printer_Tracer
 
-dotnet restore
+# 1. Backend (terminal 1)
 dotnet run
+#   -> http://localhost:5239 , Swagger: http://localhost:5239/swagger
+
+# 2. Frontend (terminal 2)
+cd web
+npm install          # ilk sefer
+npm run dev
+#   -> http://localhost:3000
 ```
 
-Uygulama açıldığında veritabanı migration'ları otomatik uygulanır
-(`yazicitakip.db` çalışma dizininde oluşur); **sayaç okuması yapılmaz**. Konsolda
-yazan `http://localhost:5xxx` adresini tarayıcıda aç — açılış sayfası "Sayaç Oku".
+`dotnet run` açılışta DB migration'larını uygular (`yazicitakip.db` çalışma
+dizininde oluşur); **sayaç okuması yapmaz**.
 
-> Visual Studio ile: `YaziciTakip.csproj` açılıp F5 ile çalıştırılabilir.
+Frontend'in backend adresi `web/.env.local` içindeki `NEXT_PUBLIC_API_BASE`
+(varsayılan `http://localhost:5239`). Backend'in kabul ettiği frontend origin'i
+`appsettings.json` → `Cors:Origins` (varsayılan `http://localhost:3000`).
 
 ### Arayüzü örnek veriyle denemek
 
-Gerçek yazıcı olmadan raporları görmek için Development ortamında örnek veri
-üretilebilir. `appsettings.Development.json` içinde:
+Gerçek yazıcı olmadan raporları görmek için Development ortamında,
+`appsettings.Development.json` içinde:
 
 ```json
 "PrinterMonitoring": { "SeedSampleReadings": true }
 ```
 
-ayarlanıp `dotnet run` çalıştırılır (yalnızca `PrintReadings` tablosu boşken
-üretir).
+ayarlanıp backend çalıştırılır (yalnızca `PrintReadings` tablosu boşken üretir).
 
 ## Yapılandırma (`appsettings.json`)
 
 ```jsonc
+"Cors": { "Origins": [ "http://localhost:3000" ] },   // frontend origin(ler)i
+"Hakedis": { "FromCompany": "", "ToCompany": "" },     // belgede gösterilen firma bilgisi (boş = gizli)
 "PrinterMonitoring": {
-  "PollingEnabled": false,               // true ise arka planda periyodik okuma yapılır
-  "PollingIntervalMinutes": 1440,        // periyodik okuma açıksa okuma sıklığı (dk)
+  "PollingEnabled": false,               // true ise arka planda periyodik okuma
+  "PollingIntervalMinutes": 1440,
   "Snmp": {
     "Community": "public",
     "Version": "V2c",                    // V2c | V1
-    "FallbackToV1": true,                // v2c başarısızsa v1 dene
+    "FallbackToV1": true,
     "Port": 161,
     "TimeoutSeconds": 5,
-    "PageCountOid": "1.3.6.1.2.1.43.10.2.1.4.1.1"   // toplam sayfa sayacı
+    "PageCountOid": "1.3.6.1.2.1.43.10.2.1.4.1.1"
   },
   "SeedSampleReadings": false,
   "SampleDataDays": 3,
@@ -126,22 +132,20 @@ ayarlanıp `dotnet run` çalıştırılır (yalnızca `PrintReadings` tablosu bo
 
 ### Yazıcı ekleme
 
-Uygulama açıkken **Yazıcılar** sayfasından ad + IP girilir; kayıt doğrudan
-veritabanına yazılır (`appsettings.json` düzenlemek gerekmez, `yazicitakip.db`
-sürüm kontrolüne girmez). Alternatif olarak `appsettings.json` → `Printers`
-dizisine eklenebilir; toplayıcı açılışta config ile veritabanını IP bazlı
-senkronize eder.
+Frontend'deki **Yazıcılar** sayfasından ad + IP girilir; kayıt doğrudan
+veritabanına yazılır. Alternatif olarak `appsettings.json` → `Printers` dizisine
+eklenebilir; toplayıcı açılışta config ile veritabanını IP bazlı senkronize eder.
 
-Yeni bir yazıcının hangi OID'de sayaç tuttuğundan emin değilsen
-`/Diagnostics?ip=<yazici-ip>` sayfasını kullan.
+Yeni bir yazıcının hangi OID'de sayaç tuttuğundan emin değilsen **SNMP Tanılama**
+sayfasını (ya da `GET /api/diagnostics?ip=<ip>`) kullan.
 
 ## Notlar ve Sınırlar
 
 - Sayfa sayacı yazıcının **dahili ömür boyu kümülatif sayacıdır**; izlemeye
-  başlamadan önce basılan sayfaları da içerir. Ancak sayaç daha önce manuel
-  sıfırlanmışsa, gösterilen değer o sıfırlamadan sonraki toplamdır.
-- `yazicitakip.db` ve tüm `*.db*` dosyaları `.gitignore` içindedir; okuma verisi
-  repoya girmez.
-- Şirket içi/gerçek IP'ler `appsettings.Local.json` /
-  `appsettings.*.Local.json` / `appsettings.Production.json` dosyalarında
-  tutulabilir (bunlar da git dışı).
+  başlamadan önce basılanları da içerir. Sayaç manuel sıfırlanmışsa, gösterilen
+  değer o sıfırlamadan sonraki toplamdır.
+- `yazicitakip.db` ve tüm `*.db*` dosyaları, `web/node_modules` ve `web/.next`
+  `.gitignore` içindedir.
+- Şirket içi/gerçek IP'ler `appsettings.Local.json` / `appsettings.*.Local.json`
+  / `appsettings.Production.json` dosyalarında tutulabilir (git dışı).
+- Giriş / kimlik doğrulama yoktur — iç ağ aracıdır.

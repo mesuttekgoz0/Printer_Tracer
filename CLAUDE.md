@@ -243,6 +243,50 @@ YaziciTakip/
   2. Eski 2 hakedişten **`2026-0002`** silindi (kullanıcı "tedarikçisiz olanları bırak, takım liderine göstereceğim" demişti). Geri getirilemedi (WAL yok). Sadece `2026-0001` kaldı.
 - **Bundan sonra:** test verisi temizliği yalnızca bu oturumda YARATTIĞIM spesifik id'lerle yapılacak; tablo bazlı toplu DELETE yok.
 
+### Not (2026-09-09) — Next.js frontend'e geçiş başladı (Faz 1)
+- **İstek**: firma frontend'i Next.js istiyor. Onların stack'i de backend .NET + frontend Next.js; "bağlantı API'sini" kendileri yazacak. Yani benim işim: .NET backend'e temiz JSON API uçları + bunları tüketen Next.js uygulaması. Giriş yok, SSO yok, kendi tasarım sistemleri sorulmadı (kullanıcı "boş ver" dedi).
+- **Mimari**: mevcut Razor MVC bozulmadan duruyor; API onun **yanına** eklendi. Next.js ayrı origin (`web/`, port 3000), .NET API'yi (`:5239/api/**`) CORS ile çağırıyor.
+- **.NET tarafı**:
+  - `Program.cs`: `AddCors("frontend")` (origin `appsettings → Cors:Origins`, yoksa `http://localhost:3000`), `AddSwaggerGen` + dev'de `/swagger`. `app.MapControllers()` eklendi (Razor route'u da duruyor). `Swashbuckle.AspNetCore` 7.2.0 paketi.
+  - `Controllers/Api/PrintersApiController.cs` (`[ApiController]`, `api/printers`): `GET` (liste, tür/tedarikçi/okuma özetiyle), `POST` (ekle, 400/409 `ProblemDetails`), `PATCH {id}/name|type|supplier`, `DELETE {id}`. DTO'lar dosya sonunda `record`.
+  - `Controllers/Api/LookupsApiController.cs` (`api/lookups`): `{ turler:[{id,ad}], tedarikciler:[{id,ad}] }` — form açılır listeleri için.
+  - İş mantığı mevcut Razor controller'larıyla aynı; kod paylaşılmadı (kopya), ileride servise çekilebilir.
+- **Next.js `web/`** (create-next-app, Next 16 App Router, TS, Tailwind YOK, `@/*` alias):
+  - `app/globals.css`: Razor'daki Classical temanın bağımsız kopyası (Bootstrap yok, düz sınıflar: `.btn`, `.card`, `.table`, `.input/.select`, `.tag`, `.alert`, `.nav`). Açık+koyu tema token'ları, `@media prefers-color-scheme` fallback.
+  - `app/layout.tsx`: `next/font/google` ile Newsreader (`--font-heading`) + Inter (`--font-body`); FOUC önleyen inline tema script'i; `<Nav/>` + `.container` + footer.
+  - `components/Nav.tsx` (client): nav linkleri + `usePathname` aktif + tema düğmesi (localStorage `yt-theme` + `data-theme`).
+  - `lib/api.ts`: tek `fetch` sarmalayıcı; taban `NEXT_PUBLIC_API_BASE` (`.env.local` → `http://localhost:5239`); `ApiError` + `ProblemDetails.detail` mesajı.
+  - `lib/types.ts`: `Printer`, `Option`, `Lookups`.
+  - `app/yazicilar/page.tsx` + `components/PrintersClient.tsx`: Yazıcılar sayfası uçtan uca — liste + ekle formu + satır içi ad/tür/tedarikçi düzenleme + sil, hepsi API'ye. "Test et" şimdilik Razor `/Diagnostics`'e link. **Bu sayfa diğerleri için kalıp.**
+  - `app/page.tsx` → `/yazicilar`'a redirect.
+- **Test**: `next build` temiz (0 TS hatası); CORS preflight 204 + `Access-Control-Allow-Origin` doğru; API CRUD curl ile uçtan uca (400 bad-IP, 201 create, PATCH type→null / supplier→9, 204 delete) doğrulandı. Test yazıcısı silindi. Görsel doğrulama yok (tarayıcı eklentisi bağlı değil).
+- **Çalıştırma**: bir terminalde `dotnet run` (kökte, :5239), başka terminalde `cd web && npm run dev` (:3000). `web/` ilk sefer `npm install`. `npm`'i kökte DEĞİL `web/` içinde çalıştır (kökte `package.json` yok).
+
+### Not (2026-09-09) — Next.js Faz 2: tüm sayfalar taşındı
+- **Yeni API controller'ları** (`Controllers/Api/`): `ReadingsApiController` (`GET /api/readings`, `POST /api/readings/read`), `ReportApiController` (`GET /api/report/summary?from&to&all`), `TedarikcilerApiController` (`GET/POST/PUT/DELETE /api/tedarikciler[/{id}]`, `POST /api/tedarikciler/{id}/fiyat-listeleri`) + `FiyatListeleriApiController` (`PUT/DELETE /api/fiyat-listeleri/{id}`), `HakedislerApiController` (`GET /api/hakedisler`, `.../tedarikci-secenekleri`, `POST .../taslak`, `POST /api/hakedisler`, `GET /api/hakedisler/{id}`, `GET .../{id}/csv`, `DELETE`), `DiagnosticsApiController` (`GET /api/diagnostics?ip&oid`). Hepsi mevcut Razor controller'larıyla aynı iş mantığı (kopya; ileride servise çekilebilir). Fiyatlar JSON `number` (invariant), kültür sorunu yok.
+- **Next.js sayfaları** (`web/app/*`): `/yazicilar`, `/sayac-oku`, `/rapor`, `/tedarikciler`, `/tedarikciler/[id]`, `/hakedisler`, `/hakedisler/yeni` (tedarikçi seç → inceleme → kaydet, canlı tutar hesabı client'ta), `/hakedisler/[id]` (yazdırılabilir, `@media print`), `/snmp-tanilama` (`?ip=` ön-dolgu). `/` → `/yazicilar` redirect.
+- `web/lib/`: `api.ts` (get/post/put/patch/del + `ApiError`), `types.ts` (tüm DTO'lar), `format.ts` (tr-TR sayı/para/tarih + `parseFiyat`).
+- Her sayfa client component + `useEffect` fetch + mutasyon sonrası re-fetch deseni. Ortak stiller `app/globals.css`.
+- **Test**: `next build` temiz (0 TS hatası, 10 route); tüm `/api/*` uçları curl ile doğrulandı (readings/report/tedarikciler/hakedisler/taslak/csv/diagnostics), dinamik route'lar (`/hakedisler/{id}`, `/tedarikciler/{id}`) 200. Görsel doğrulama yok (tarayıcı eklentisi yok).
+- Kök dizindeki hatalı `package-lock.json` (kullanıcının kökte `npm install` denemesinden) silindi.
+- **Kalan**: görsel gözden geçirme; sonra Razor MVC (`Views/`, eski `Controllers/*Controller.cs`) kaldırılabilir — API + Next tüm işlevi karşılıyor. `DiagnosticsController` Razor'u hâlâ duruyor (silinebilir).
+
+### Not (2026-09-10) — Next.js görsel doğrulama (Claude in Chrome)
+- Kullanıcı Chrome eklentisini bağladı; 8 route tarayıcıda gezildi: `/yazicilar`, `/sayac-oku`, `/rapor`, `/tedarikciler`, `/hakedisler`, `/hakedisler/yeni`, `/hakedisler/8` (detay), `/snmp-tanilama`. Hepsi Classical temaya oturmuş, veri API'den yükleniyor, tablolar dolu.
+- Tema düğmesi çalışıyor: koyu ↔ açık geçiş + `localStorage` kalıcılığı + sayfalar arası korunuyor. İkon ay/güneş değişiyor.
+- **Düzeltilen tek sorun**: Next dev overlay "1 Issue" = hydration mismatch (`<html data-theme>` FOUC script'ten geliyor, SSR'da yok → client'ta var; ayrıca bir tarayıcı eklentisinin `<body cz-shortcut-listen>` eklemesi). `app/layout.tsx`'te `<html suppressHydrationWarning>` + `<body suppressHydrationWarning>` eklendi — bu pattern için standart çözüm. Sonrası: konsol temiz, overlay yok, `next build` temiz.
+- Diğer konsol mesajları (`message channel closed`) tarayıcı eklentisinden, uygulama değil.
+
+### Not (2026-09-10) — Razor MVC kaldırıldı; backend saf JSON API
+- **Silindi**: `Views/` (tamamı), `Controllers/{Readings,Report,Hakedis,Tedarikci,Printers,Diagnostics,Home}Controller.cs`, `wwwroot/` (css/js/lib/bootstrap/jquery/favicon), yalnız Razor'un kullandığı view-model'ler `Models/{DailySummaryViewModel,ErrorViewModel,HakedisCreateViewModel,ReadingsIndexViewModel}.cs`.
+- **Korundu**: `Controllers/Api/*` (7 controller), `Models/` entity'leri + `ManualReadResult` (PrinterReadingService kullanıyor) + `SnmpDiagnosticResult` (SnmpService + API). `Services/`, `Data/`, `Configuration/`, `appsettings.json` aynen.
+- `Program.cs`: `AddControllersWithViews()` → `AddControllers()` + `AddProblemDetails()`; `UseExceptionHandler("/Home/Error")` → `UseExceptionHandler()` (ProblemDetails); `MapStaticAssets()` ve `MapControllerRoute(...)` kaldırıldı, sadece `MapControllers()`.
+- `YaziciTakip.csproj`: `<StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>` — `wwwroot` silinince `WebApplication.CreateBuilder` `UseStaticWebAssets()`'te `DirectoryNotFoundException` atıyordu; bu bayrak çözüyor. (SDK hâlâ `Microsoft.NET.Sdk.Web` — Kestrel/DI/hosting için gerekli.)
+- `Properties/launchSettings.json`: `launchUrl: "swagger"` (kök artık 404).
+- `README.md` iki parçalı yapıya göre yeniden yazıldı (backend API + `web/` frontend, çalıştırma iki terminal).
+- **Test**: `dotnet build` 0/0; API tüm uçlar 200, `/swagger` 200, eski Razor route'ları (`/`, `/Readings`, `/Report/Summary`, `/Printers`, `/Hakedis`) 404, CORS preflight 204. Next.js frontend trimmed backend'e karşı tarayıcıda doğrulandı (Sayaç Oku + Hakedişler veri yüklüyor, konsol temiz).
+- Artık: kök = saf JSON API (`dotnet run`, :5239), `web/` = tek arayüz (`npm run dev`, :3000).
+
 ## Notlar
 - Henüz yazıcı IP'leri ve SNMP versiyonu netleşmedi — bu bilgiler geldikçe `appsettings.json` ve bağlantı testleri güncellenecek.
 - Kullanıcı/IP bazlı "hangi istekler gönderildi" bilgisi bu mimaride mevcut değil; bu sınırlama yöneticiyle paylaşılmalı.

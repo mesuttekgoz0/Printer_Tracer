@@ -26,6 +26,11 @@ appsettings.Local.json
 appsettings.*.Local.json
 appsettings.Production.json
 
+# Next.js frontend (web/) — web/.gitignore de var, bu nested/yanlış-konum kopyalara karşı
+web/**/node_modules/
+web/**/.next/
+web/web/
+
 # Logs
 *.log
 
