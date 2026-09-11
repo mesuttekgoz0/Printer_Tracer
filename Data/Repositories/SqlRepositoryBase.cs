@@ -73,18 +73,6 @@ public abstract class SqlRepositoryBase(AppDbContext db)
     protected static DateTime GetDateTimeUtc(SqlDataReader r, string col) =>
         DateTime.SpecifyKind(r.GetDateTime(r.GetOrdinal(col)), DateTimeKind.Utc);
 
-    protected static DateTime? GetDateTimeUtcN(SqlDataReader r, string col)
-    {
-        var i = r.GetOrdinal(col);
-        return r.IsDBNull(i) ? null : DateTime.SpecifyKind(r.GetDateTime(i), DateTimeKind.Utc);
-    }
-
     protected static DateOnly GetDateOnly(SqlDataReader r, string col) =>
         DateOnly.FromDateTime(r.GetDateTime(r.GetOrdinal(col)));
-
-    protected static DateOnly? GetDateOnlyN(SqlDataReader r, string col)
-    {
-        var i = r.GetOrdinal(col);
-        return r.IsDBNull(i) ? null : DateOnly.FromDateTime(r.GetDateTime(i));
-    }
 }

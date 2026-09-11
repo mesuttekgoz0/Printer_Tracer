@@ -138,7 +138,7 @@ Frontend'in backend adresi `web/.env.local` içindeki `NEXT_PUBLIC_API_BASE`
   // "Server=(localdb)\\MSSQLLocalDB;..." yeterli.
   "AppDb": "Server=localhost;Database=YaziciTakip;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true"
 },
-"Cors": { "Origins": [ "http://localhost:3000" ] },   // frontend origin(ler)i
+"Cors": { "Origins": [ "http://localhost:3000" ] },   // opsiyonel — yoksa kod bu varsayılanı kullanır
 "Hakedis": { "FromCompany": "", "ToCompany": "" },     // belgede gösterilen firma bilgisi (boş = gizli)
 "Snmp": {
   "Community": "public",

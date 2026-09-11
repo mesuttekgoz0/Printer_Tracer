@@ -37,3 +37,7 @@ web/web/
 # OS
 Thumbs.db
 .DS_Store
+
+# Claude Code proje hafızası — geliştirme sürecinin iç notları, repoya/takıma gitmesin.
+# Dosya diskte kalır (Claude yine okur), sadece GitHub'a gitmiyor.
+CLAUDE.md
