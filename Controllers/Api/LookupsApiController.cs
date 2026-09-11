@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 
 namespace YaziciTakip.Controllers.Api;
 
@@ -12,25 +11,21 @@ namespace YaziciTakip.Controllers.Api;
 [Produces("application/json")]
 public class LookupsApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly ITurRepository _turler;
+    private readonly ITedarikciRepository _tedarikciler;
 
-    public LookupsApiController(AppDbContext db)
+    public LookupsApiController(ITurRepository turler, ITedarikciRepository tedarikciler)
     {
-        _db = db;
+        _turler = turler;
+        _tedarikciler = tedarikciler;
     }
 
     [HttpGet]
     public async Task<ActionResult<LookupsDto>> Get()
     {
-        var turler = await _db.Turler.AsNoTracking()
-            .OrderBy(t => t.Id)
-            .Select(t => new OptionDto(t.Id, t.Ad))
-            .ToListAsync();
-
-        var tedarikciler = await _db.Tedarikciler.AsNoTracking()
-            .OrderBy(t => t.Ad)
-            .Select(t => new OptionDto(t.Id, t.Ad))
-            .ToListAsync();
+        var ct = HttpContext.RequestAborted;
+        var turler = (await _turler.GetAllAsync(ct)).Select(t => new OptionDto(t.Id, t.Ad)).ToList();
+        var tedarikciler = (await _tedarikciler.GetAllAsync(ct)).Select(t => new OptionDto(t.Id, t.Ad)).ToList();
 
         return new LookupsDto(turler, tedarikciler);
     }

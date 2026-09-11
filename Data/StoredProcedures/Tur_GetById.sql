@@ -1,0 +1,5 @@
+CREATE PROCEDURE dbo.Tur_GetById @Id INT
+AS
+BEGIN
+    SELECT Id, Ad FROM dbo.Turler WHERE Id = @Id;
+END

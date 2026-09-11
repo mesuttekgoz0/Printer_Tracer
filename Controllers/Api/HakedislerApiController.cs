@@ -1,67 +1,70 @@
 using System.Globalization;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using YaziciTakip.Configuration;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 using YaziciTakip.Models;
 
 namespace YaziciTakip.Controllers.Api;
 
-/// <summary>Hakediş belgeleri JSON API'si (tedarikçi seçerek üret, dondur, indir).</summary>
+/// <summary>
+/// Hakediş belgeleri JSON API'si (tedarikçi seçerek üret, dondur, indir). Veri erişimi
+/// saklı yordamlarla (<see cref="IHakedisRepository"/> ve ilgili repository'ler) yapılır.
+/// </summary>
 [ApiController]
 [Route("api/hakedisler")]
 [Produces("application/json")]
 public class HakedislerApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IHakedisRepository _hakedisler;
+    private readonly ITedarikciRepository _tedarikciler;
+    private readonly IPrinterRepository _printers;
+    private readonly IPrintReadingRepository _readings;
+    private readonly IFiyatRepository _fiyatlar;
     private readonly HakedisOptions _options;
 
-    public HakedislerApiController(AppDbContext db, IOptions<HakedisOptions> options)
+    public HakedislerApiController(
+        IHakedisRepository hakedisler, ITedarikciRepository tedarikciler, IPrinterRepository printers,
+        IPrintReadingRepository readings, IFiyatRepository fiyatlar, IOptions<HakedisOptions> options)
     {
-        _db = db;
+        _hakedisler = hakedisler;
+        _tedarikciler = tedarikciler;
+        _printers = printers;
+        _readings = readings;
+        _fiyatlar = fiyatlar;
         _options = options.Value;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<HakedisListDto>>> GetAll()
     {
-        return await _db.Hakedisler.AsNoTracking()
-            .OrderByDescending(h => h.CreatedUtc)
-            .Select(h => new HakedisListDto(
-                h.Id, h.Number, h.TedarikciAd, h.CreatedUtc, h.PeriodStart, h.PeriodEnd,
-                h.Lines.Count,
-                h.Lines.Sum(l => (long?)l.Pages ?? 0),
-                h.Lines.Sum(l => (decimal?)l.Amount ?? 0m)))
-            .ToListAsync();
+        var rows = await _hakedisler.GetAllAsync(HttpContext.RequestAborted);
+        return rows.Select(h => new HakedisListDto(
+            h.Id, h.Number, h.TedarikciAd, h.CreatedUtc, h.PeriodStart, h.PeriodEnd,
+            h.PrinterCount, h.TotalPages, h.TotalAmount)).ToList();
     }
 
     [HttpGet("tedarikci-secenekleri")]
     public async Task<ActionResult<IEnumerable<TedarikciSecDto>>> SupplierOptions()
     {
-        return await _db.Tedarikciler.AsNoTracking()
-            .OrderBy(t => t.Ad)
-            .Select(t => new TedarikciSecDto(t.Id, t.Ad, t.Printers.Count, t.Fiyatlar.Any()))
-            .ToListAsync();
+        var rows = await _tedarikciler.ListForHakedisSecimAsync(HttpContext.RequestAborted);
+        return rows.Select(t => new TedarikciSecDto(t.Id, t.Ad, t.PrinterCount, t.HasPriceList)).ToList();
     }
 
     [HttpPost("taslak")]
     public async Task<ActionResult<HakedisTaslakDto>> Taslak([FromBody] TaslakRequest req)
     {
-        var tedarikci = await _db.Tedarikciler.AsNoTracking().FirstOrDefaultAsync(t => t.Id == req.TedarikciId);
+        var ct = HttpContext.RequestAborted;
+        var tedarikci = await _tedarikciler.GetByIdAsync(req.TedarikciId, ct);
         if (tedarikci is null) return Problem("Tedarikçi bulunamadı.", statusCode: 404);
 
-        var printers = await _db.Printers.AsNoTracking()
-            .Include(p => p.Tur)
-            .Where(p => p.TedarikciId == req.TedarikciId)
-            .OrderBy(p => p.Name)
-            .ToListAsync();
+        var printers = await _printers.ListByTedarikciAsync(req.TedarikciId, ct);
         if (printers.Count == 0)
             return Problem($"\"{tedarikci.Ad}\" tedarikçisine bağlı yazıcı yok.", statusCode: 400);
 
         var today = DateOnly.FromDateTime(DateTime.Now);
-        var hasAnyFiyat = await _db.Fiyatlar.AnyAsync(f => f.TedarikciId == req.TedarikciId);
+        var hasAnyFiyat = await _fiyatlar.AnyForTedarikciAsync(req.TedarikciId, ct);
 
         var warnings = new List<string>();
         var skipped = new List<string>();
@@ -70,24 +73,16 @@ public class HakedislerApiController : ControllerBase
         if (!hasAnyFiyat)
             warnings.Add($"\"{tedarikci.Ad}\" tedarikçisi için tanımlı fiyat yok — tüm tutarlar 0 gelir.");
 
-        foreach (var printer in printers)
+        foreach (var printer in printers.OrderBy(p => p.Name))
         {
-            var latest = await _db.PrintReadings.AsNoTracking()
-                .Where(r => r.PrinterId == printer.Id)
-                .OrderByDescending(r => r.TimestampUtc)
-                .Select(r => new { r.PageCount, r.TimestampUtc })
-                .FirstOrDefaultAsync();
+            var latest = await _readings.GetLatestAsync(printer.Id, ct);
             if (latest is null)
             {
                 skipped.Add(printer.Name);
                 continue;
             }
 
-            var lastLine = await _db.HakedisLines.AsNoTracking()
-                .Where(l => l.PrinterId == printer.Id)
-                .OrderByDescending(l => l.Hakedis!.CreatedUtc)
-                .Select(l => new { l.CurrentCounter, l.Hakedis!.PeriodEnd })
-                .FirstOrDefaultAsync();
+            var lastLine = await _hakedisler.GetLastLineForPrinterAsync(printer.Id, ct);
 
             long previousCounter;
             DateTime? previousUtc;
@@ -100,12 +95,8 @@ public class HakedislerApiController : ControllerBase
             }
             else
             {
-                var earliest = await _db.PrintReadings.AsNoTracking()
-                    .Where(r => r.PrinterId == printer.Id)
-                    .OrderBy(r => r.TimestampUtc)
-                    .Select(r => new { r.PageCount, r.TimestampUtc })
-                    .FirstAsync();
-                previousCounter = earliest.PageCount;
+                var earliest = await _readings.GetEarliestAsync(printer.Id, ct);
+                previousCounter = earliest!.PageCount;
                 previousUtc = earliest.TimestampUtc;
                 first = true;
             }
@@ -113,7 +104,7 @@ public class HakedislerApiController : ControllerBase
             decimal unitPrice = 0m;
             string? priceNote = null;
             if (printer.TurId is int tid)
-                (unitPrice, priceNote) = await ResolveUnitPriceAsync(req.TedarikciId, tid, today);
+                (unitPrice, priceNote) = await ResolveUnitPriceAsync(req.TedarikciId, tid, today, ct);
 
             if (printer.TurId is null)
                 warnings.Add($"{printer.Name}: türü belirtilmemiş — fiyat uygulanamadı (0).");
@@ -139,25 +130,17 @@ public class HakedislerApiController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<HakedisCreatedDto>> Create([FromBody] HakedisKaydetRequest req)
     {
+        var ct = HttpContext.RequestAborted;
         var rows = (req.Rows ?? new()).Where(r => r.PrinterId > 0).ToList();
         if (rows.Count == 0) return Problem("Hakedişe eklenecek satır yok.", statusCode: 400);
 
         var year = req.PeriodEnd == default ? DateTime.Now.Year : req.PeriodEnd.Year;
-        var prefix = $"{year}-";
-        // Numara adet değil, o yıl içindeki EN YÜKSEK sıra + 1'den üretilir; arada silinmiş
-        // kayıt olsa bile (numarada boşluk) mevcut bir numarayı tekrar üretmeyiz.
-        var mevcutNumaralar = await _db.Hakedisler
-            .Where(h => h.Number.StartsWith(prefix))
-            .Select(h => h.Number)
-            .ToListAsync();
-        var sonSira = mevcutNumaralar
-            .Select(n => int.TryParse(n.Substring(prefix.Length), out var s) ? s : 0)
-            .DefaultIfEmpty(0)
-            .Max();
-        var number = $"{prefix}{sonSira + 1:D4}";
+        // Numara adet değil, o yıl içindeki EN YÜKSEK sıra + 1'den üretilir (dbo.Hakedis_NextNumber);
+        // arada silinmiş kayıt olsa bile (numarada boşluk) mevcut bir numara tekrar üretilmez.
+        var number = await _hakedisler.NextNumberAsync($"{year}-", ct);
 
         var tedarikciAd = req.TedarikciId > 0
-            ? await _db.Tedarikciler.Where(t => t.Id == req.TedarikciId).Select(t => t.Ad).FirstOrDefaultAsync()
+            ? (await _tedarikciler.GetByIdAsync(req.TedarikciId, ct))?.Ad
             : null;
 
         var hakedis = new Hakedis
@@ -171,18 +154,16 @@ public class HakedislerApiController : ControllerBase
             Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
         };
 
-        var ids = rows.Select(r => r.PrinterId).ToList();
-        var printers = await _db.Printers.AsNoTracking().Include(p => p.Tur)
-            .Where(p => ids.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
+        var hakedisId = await _hakedisler.InsertAsync(hakedis, ct);
 
         foreach (var r in rows)
         {
             var pages = r.CurrentCounter >= r.PreviousCounter ? r.CurrentCounter - r.PreviousCounter : (long?)null;
-            printers.TryGetValue(r.PrinterId, out var printer);
+            var printer = await _printers.GetByIdAsync(r.PrinterId, ct);
             var unitPrice = Math.Max(0m, r.UnitPrice);
             var amount = decimal.Round((pages ?? 0) * unitPrice, 2, MidpointRounding.AwayFromZero);
 
-            hakedis.Lines.Add(new HakedisLine
+            await _hakedisler.InsertLineAsync(hakedisId, new HakedisLine
             {
                 PrinterId = r.PrinterId,
                 PrinterName = printer?.Name ?? (string.IsNullOrWhiteSpace(r.PrinterName) ? $"#{r.PrinterId}" : r.PrinterName.Trim()),
@@ -194,35 +175,37 @@ public class HakedislerApiController : ControllerBase
                 Pages = pages,
                 UnitPrice = unitPrice,
                 Amount = amount,
-            });
+            }, ct);
         }
 
-        _db.Hakedisler.Add(hakedis);
-        await _db.SaveChangesAsync();
-        return CreatedAtAction(nameof(Get), new { id = hakedis.Id }, new HakedisCreatedDto(hakedis.Id, hakedis.Number));
+        return CreatedAtAction(nameof(Get), new { id = hakedisId }, new HakedisCreatedDto(hakedisId, number));
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<HakedisDetailDto>> Get(int id)
     {
-        var h = await _db.Hakedisler.AsNoTracking().Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == id);
+        var ct = HttpContext.RequestAborted;
+        var h = await _hakedisler.GetByIdAsync(id, ct);
         if (h is null) return NotFound();
+        var lines = await _hakedisler.ListLinesAsync(id, ct);
 
         return new HakedisDetailDto(
             h.Id, h.Number, h.TedarikciAd, h.CreatedUtc, h.PeriodStart, h.PeriodEnd, h.Note,
             string.IsNullOrWhiteSpace(_options.FromCompany) ? null : _options.FromCompany,
             string.IsNullOrWhiteSpace(h.TedarikciAd) && !string.IsNullOrWhiteSpace(_options.ToCompany) ? _options.ToCompany : null,
-            h.Lines.Select(l => new HakedisLineDto(
+            lines.Select(l => new HakedisLineDto(
                 l.PrinterName, l.Model, l.TurAd ?? Tur.Belirtilmemis,
                 l.PreviousCounter, l.CurrentCounter, l.Pages, l.UnitPrice, l.Amount)).ToList(),
-            h.TotalPages, h.TotalAmount);
+            lines.Sum(l => (long?)l.Pages ?? 0), lines.Sum(l => l.Amount));
     }
 
     [HttpGet("{id:int}/csv")]
     public async Task<IActionResult> Csv(int id)
     {
-        var h = await _db.Hakedisler.AsNoTracking().Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == id);
+        var ct = HttpContext.RequestAborted;
+        var h = await _hakedisler.GetByIdAsync(id, ct);
         if (h is null) return NotFound();
+        var lines = await _hakedisler.ListLinesAsync(id, ct);
 
         var tr = new CultureInfo("tr-TR");
         var sb = new StringBuilder();
@@ -234,7 +217,7 @@ public class HakedislerApiController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("Sıra;Yazıcı;Marka / Model;Tür;Önceki Sayaç;Şimdiki Sayaç;Fark (Sayfa);Sayfa Başı Fiyat;Tutar");
         var i = 1;
-        foreach (var l in h.Lines)
+        foreach (var l in lines)
         {
             sb.Append(i++).Append(';')
               .Append(Esc(l.PrinterName)).Append(';')
@@ -246,7 +229,9 @@ public class HakedislerApiController : ControllerBase
               .Append(l.UnitPrice.ToString("0.####", tr)).Append(';')
               .Append(l.Amount.ToString("0.00", tr)).AppendLine();
         }
-        sb.AppendLine($";;;;;;Toplam;{h.TotalPages};{h.TotalAmount.ToString("0.00", tr)}");
+        var totalPages = lines.Sum(l => (long?)l.Pages ?? 0);
+        var totalAmount = lines.Sum(l => l.Amount);
+        sb.AppendLine($";;;;;;Toplam;{totalPages};{totalAmount.ToString("0.00", tr)}");
 
         var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
         return File(bytes, "text/csv", $"hakedis-{h.Number}.csv");
@@ -258,36 +243,22 @@ public class HakedislerApiController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var h = await _db.Hakedisler.FindAsync(id);
-        if (h is null) return NotFound();
-        _db.Hakedisler.Remove(h);
-        await _db.SaveChangesAsync();
+        if (!await _hakedisler.DeleteAsync(id, HttpContext.RequestAborted))
+            return NotFound();
         return NoContent();
     }
 
     /// <summary>
-    /// (Tedarikçi, tür) için <paramref name="asOf"/> tarihini kapsayan fiyat detayının
-    /// sayfa-başı fiyatı. Master yoksa / kapsayan detay yoksa 0. Birden çok kapsıyorsa
-    /// en yeni başlangıçlı.
-    /// </summary>
-    /// <summary>
     /// (Tedarikçi, tür) için <paramref name="asOf"/> tarihini kapsayan fiyat detayının fiyatı.
     /// Fiyat 0 ise <c>Note</c> nedeni açıklar (tanımlı değil / tarih aralığı kapsamıyor).
     /// </summary>
-    private async Task<(decimal Price, string? Note)> ResolveUnitPriceAsync(int tedarikciId, int turId, DateOnly asOf)
+    private async Task<(decimal Price, string? Note)> ResolveUnitPriceAsync(int tedarikciId, int turId, DateOnly asOf, CancellationToken ct)
     {
-        var fiyatId = await _db.Fiyatlar.AsNoTracking()
-            .Where(f => f.TedarikciId == tedarikciId && f.TurId == turId)
-            .Select(f => (int?)f.Id)
-            .FirstOrDefaultAsync();
+        var fiyatId = await _fiyatlar.FindMasterAsync(tedarikciId, turId, ct);
         if (fiyatId is null)
             return (0m, "bu tür için tanımlı fiyat yok");
 
-        var detaylar = await _db.FiyatDetaylari.AsNoTracking()
-            .Where(d => d.FiyatId == fiyatId)
-            .OrderByDescending(d => d.BaslangicTarihi).ThenByDescending(d => d.Id)
-            .Select(d => new { d.BaslangicTarihi, d.BitisTarihi, d.SayfaBasiFiyat })
-            .ToListAsync();
+        var detaylar = await _fiyatlar.ListDetaylarByFiyatIdAsync(fiyatId.Value, ct);
 
         var match = detaylar.FirstOrDefault(d => d.BaslangicTarihi <= asOf && asOf <= d.BitisTarihi);
         if (match is not null)

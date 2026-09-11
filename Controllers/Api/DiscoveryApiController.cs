@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 using YaziciTakip.Services;
 
 namespace YaziciTakip.Controllers.Api;
@@ -12,12 +11,12 @@ namespace YaziciTakip.Controllers.Api;
 public class DiscoveryApiController : ControllerBase
 {
     private readonly PrinterDiscoveryService _discovery;
-    private readonly AppDbContext _db;
+    private readonly IPrinterRepository _printers;
 
-    public DiscoveryApiController(PrinterDiscoveryService discovery, AppDbContext db)
+    public DiscoveryApiController(PrinterDiscoveryService discovery, IPrinterRepository printers)
     {
         _discovery = discovery;
-        _db = db;
+        _printers = printers;
     }
 
     /// <summary>Sunucunun aktif arayüzlerinden türetilen taranabilir ağlar.</summary>
@@ -76,9 +75,7 @@ public class DiscoveryApiController : ControllerBase
             return Problem("Tarama zaman aşımına uğradı (45sn).", statusCode: 504);
         }
 
-        var registered = await _db.Printers.AsNoTracking()
-            .Select(p => p.IpAddress)
-            .ToListAsync(HttpContext.RequestAborted);
+        var registered = await _printers.ListAllIpAddressesAsync(HttpContext.RequestAborted);
         var regSet = new HashSet<string>(registered, StringComparer.OrdinalIgnoreCase);
 
         return devices.Select(d => new DiscoveredDto(

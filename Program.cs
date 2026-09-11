@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using YaziciTakip.Configuration;
 using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 using YaziciTakip.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,9 +25,13 @@ builder.Services.AddCors(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("AppDb")
-                      ?? "Data Source=yazicitakip.db"));
+var connectionString = builder.Configuration.GetConnectionString("AppDb")
+    ?? "Server=localhost;Database=YaziciTakip;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true";
+
+// AppDbContext yalnızca şema (EF Core migration'ları) için kullanılır — uygulama artık
+// veriye LINQ ile değil, Data/Repositories altındaki sınıflar üzerinden, doğrudan
+// saklı yordamları (stored procedure) çağırarak erişiyor (bkz. CLAUDE.md "MSSQL geçişi").
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlServer(connectionString));
 
 builder.Services.Configure<SnmpOptions>(
     builder.Configuration.GetSection(SnmpOptions.SectionName));
@@ -37,6 +42,14 @@ builder.Services.Configure<HakedisOptions>(
 builder.Services.AddSingleton<ISnmpService, SnmpService>();
 builder.Services.AddScoped<PrinterReadingService>();
 builder.Services.AddScoped<PrinterDiscoveryService>();
+
+// Saklı yordam tabanlı veri erişim katmanı (ADO.NET + SqlCommand, CommandType.StoredProcedure).
+builder.Services.AddScoped<ITurRepository, TurRepository>();
+builder.Services.AddScoped<ITedarikciRepository, TedarikciRepository>();
+builder.Services.AddScoped<IPrinterRepository, PrinterRepository>();
+builder.Services.AddScoped<IPrintReadingRepository, PrintReadingRepository>();
+builder.Services.AddScoped<IFiyatRepository, FiyatRepository>();
+builder.Services.AddScoped<IHakedisRepository, HakedisRepository>();
 
 var app = builder.Build();
 

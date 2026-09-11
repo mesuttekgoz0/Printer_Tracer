@@ -1,0 +1,5 @@
+CREATE PROCEDURE dbo.Tur_GetAll
+AS
+BEGIN
+    SELECT Id, Ad FROM dbo.Turler ORDER BY Id;
+END

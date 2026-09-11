@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 
 namespace YaziciTakip.Controllers.Api;
 
@@ -10,17 +9,20 @@ namespace YaziciTakip.Controllers.Api;
 [Produces("application/json")]
 public class ReportApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IPrinterRepository _printers;
+    private readonly IPrintReadingRepository _readings;
 
-    public ReportApiController(AppDbContext db)
+    public ReportApiController(IPrinterRepository printers, IPrintReadingRepository readings)
     {
-        _db = db;
+        _printers = printers;
+        _readings = readings;
     }
 
     [HttpGet("summary")]
     public async Task<ActionResult<ReportSummaryDto>> Summary(
         [FromQuery] DateOnly? from, [FromQuery] DateOnly? to, [FromQuery] bool all = false)
     {
+        var ct = HttpContext.RequestAborted;
         const int recentLimit = 30;
         var today = DateOnly.FromDateTime(DateTime.Now);
         var toDay = to ?? today;
@@ -30,18 +32,14 @@ public class ReportApiController : ControllerBase
 
         var endUtc = toDay.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
 
-        var printers = await _db.Printers.AsNoTracking().OrderBy(p => p.Name).ToListAsync();
+        var printers = await _printers.GetAllAsync(ct);
         var log = new List<ReadingLogDto>();
         var printerTotals = new Dictionary<int, long>();
         long grand = 0;
 
         foreach (var printer in printers)
         {
-            var readings = await _db.PrintReadings.AsNoTracking()
-                .Where(r => r.PrinterId == printer.Id && r.TimestampUtc < endUtc)
-                .OrderBy(r => r.TimestampUtc)
-                .Select(r => new { r.TimestampUtc, r.PageCount })
-                .ToListAsync();
+            var readings = await _readings.ListBeforeUtcAsync(printer.Id, endUtc, ct);
 
             for (var i = 0; i < readings.Count; i++)
             {

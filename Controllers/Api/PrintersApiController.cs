@@ -1,46 +1,39 @@
 using System.Net;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
-using YaziciTakip.Models;
+using YaziciTakip.Data.Repositories;
 
 namespace YaziciTakip.Controllers.Api;
 
 /// <summary>
-/// Yazıcı listesi JSON API'si (Next.js frontend için). Mevcut <see cref="PrintersController"/>
-/// (Razor) ile aynı iş mantığını kullanır; sadece JSON döner.
+/// Yazıcı listesi JSON API'si (Next.js frontend için). Veri erişimi <see cref="IPrinterRepository"/>
+/// ve <see cref="IPrintReadingRepository"/> üzerinden saklı yordamlarla yapılır.
 /// </summary>
 [ApiController]
 [Route("api/printers")]
 [Produces("application/json")]
 public class PrintersApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IPrinterRepository _printers;
+    private readonly IPrintReadingRepository _readings;
+    private readonly ITurRepository _turler;
+    private readonly ITedarikciRepository _tedarikciler;
 
-    public PrintersApiController(AppDbContext db)
+    public PrintersApiController(
+        IPrinterRepository printers, IPrintReadingRepository readings,
+        ITurRepository turler, ITedarikciRepository tedarikciler)
     {
-        _db = db;
+        _printers = printers;
+        _readings = readings;
+        _turler = turler;
+        _tedarikciler = tedarikciler;
     }
 
     /// <summary>Kayıtlı tüm yazıcılar, tür/tedarikçi ve son okuma bilgisiyle.</summary>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<PrinterDto>>> GetAll()
     {
-        var printers = await _db.Printers.AsNoTracking()
-            .Include(p => p.Tur)
-            .Include(p => p.Tedarikci)
-            .OrderBy(p => p.Name)
-            .ToListAsync();
-
-        var readingAgg = await _db.PrintReadings.AsNoTracking()
-            .GroupBy(r => r.PrinterId)
-            .Select(g => new
-            {
-                PrinterId = g.Key,
-                Count = g.Count(),
-                LatestUtc = g.Max(r => r.TimestampUtc),
-            })
-            .ToDictionaryAsync(x => x.PrinterId);
+        var printers = await _printers.GetAllAsync(HttpContext.RequestAborted);
+        var readingAgg = await _readings.GetAggregateAllAsync(HttpContext.RequestAborted);
 
         var result = new List<PrinterDto>();
         foreach (var p in printers)
@@ -52,11 +45,7 @@ public class PrintersApiController : ControllerBase
             {
                 count = agg.Count;
                 latestUtc = agg.LatestUtc;
-                latestCounter = await _db.PrintReadings.AsNoTracking()
-                    .Where(r => r.PrinterId == p.Id)
-                    .OrderByDescending(r => r.TimestampUtc)
-                    .Select(r => (long?)r.PageCount)
-                    .FirstOrDefaultAsync();
+                latestCounter = (await _readings.GetLatestAsync(p.Id, HttpContext.RequestAborted))?.PageCount;
             }
 
             result.Add(new PrinterDto(
@@ -73,6 +62,7 @@ public class PrintersApiController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<PrinterDto>> Create([FromBody] PrinterCreateRequest req)
     {
+        var ct = HttpContext.RequestAborted;
         var name = (req.Name ?? string.Empty).Trim();
         var ip = (req.IpAddress ?? string.Empty).Trim();
 
@@ -80,25 +70,23 @@ public class PrintersApiController : ControllerBase
             return Problem("Yazıcı adı boş olamaz.", statusCode: 400);
         if (!IPAddress.TryParse(ip, out _))
             return Problem($"\"{ip}\" geçerli bir IP adresi değil.", statusCode: 400);
-        if (await _db.Printers.AnyAsync(p => p.IpAddress == ip))
+        if (await _printers.ExistsByIpAsync(ip, ct))
             return Problem($"{ip} zaten kayıtlı bir yazıcı.", statusCode: 409);
 
-        var turId = await ValidLookupOrNull(req.TurId, id => _db.Turler.AnyAsync(t => t.Id == id));
-        var tedarikciId = await ValidLookupOrNull(req.TedarikciId, id => _db.Tedarikciler.AnyAsync(t => t.Id == id));
+        var turId = await ValidTurOrNull(req.TurId, ct);
+        var tedarikciId = await ValidTedarikciOrNull(req.TedarikciId, ct);
 
-        var printer = new Printer { Name = name, IpAddress = ip, TurId = turId, TedarikciId = tedarikciId };
-        _db.Printers.Add(printer);
-
+        int id;
         try
         {
-            await _db.SaveChangesAsync();
+            id = await _printers.InsertAsync(name, ip, turId, tedarikciId, ct);
         }
-        catch (DbUpdateException)
+        catch (DuplicateIpAddressException ex)
         {
-            return Problem($"{ip} zaten kayıtlı bir yazıcı.", statusCode: 409);
+            return Problem(ex.Message, statusCode: 409);
         }
 
-        return CreatedAtAction(nameof(GetAll), new { id = printer.Id }, await ToDto(printer.Id));
+        return CreatedAtAction(nameof(GetAll), new { id }, await ToDto(id));
     }
 
     [HttpPatch("{id:int}/name")]
@@ -108,67 +96,51 @@ public class PrintersApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(name))
             return Problem("Yazıcı adı boş olamaz.", statusCode: 400);
 
-        var printer = await _db.Printers.FindAsync(id);
-        if (printer is null)
+        if (!await _printers.UpdateNameAsync(id, name, HttpContext.RequestAborted))
             return NotFound();
-
-        printer.Name = name;
-        await _db.SaveChangesAsync();
         return Ok(await ToDto(id));
     }
 
     [HttpPatch("{id:int}/type")]
     public async Task<IActionResult> SetType(int id, [FromBody] SetTurRequest req)
     {
-        var printer = await _db.Printers.FindAsync(id);
-        if (printer is null)
+        var ct = HttpContext.RequestAborted;
+        var turId = await ValidTurOrNull(req.TurId, ct);
+        if (!await _printers.UpdateTurAsync(id, turId, ct))
             return NotFound();
-
-        printer.TurId = await ValidLookupOrNull(req.TurId, x => _db.Turler.AnyAsync(t => t.Id == x));
-        await _db.SaveChangesAsync();
         return Ok(await ToDto(id));
     }
 
     [HttpPatch("{id:int}/supplier")]
     public async Task<IActionResult> SetSupplier(int id, [FromBody] SetTedarikciRequest req)
     {
-        var printer = await _db.Printers.FindAsync(id);
-        if (printer is null)
+        var ct = HttpContext.RequestAborted;
+        var tedarikciId = await ValidTedarikciOrNull(req.TedarikciId, ct);
+        if (!await _printers.UpdateTedarikciAsync(id, tedarikciId, ct))
             return NotFound();
-
-        printer.TedarikciId = await ValidLookupOrNull(req.TedarikciId, x => _db.Tedarikciler.AnyAsync(t => t.Id == x));
-        await _db.SaveChangesAsync();
         return Ok(await ToDto(id));
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var printer = await _db.Printers.FindAsync(id);
-        if (printer is null)
+        if (!await _printers.DeleteAsync(id, HttpContext.RequestAborted))
             return NotFound();
-
-        _db.Printers.Remove(printer);
-        await _db.SaveChangesAsync();
         return NoContent();
     }
 
-    private static async Task<int?> ValidLookupOrNull(int? id, Func<int, Task<bool>> exists)
-        => id is int x && await exists(x) ? x : null;
+    private async Task<int?> ValidTurOrNull(int? id, CancellationToken ct)
+        => id is int x && await _turler.GetByIdAsync(x, ct) is not null ? x : null;
+
+    private async Task<int?> ValidTedarikciOrNull(int? id, CancellationToken ct)
+        => id is int x && await _tedarikciler.GetByIdAsync(x, ct) is not null ? x : null;
 
     private async Task<PrinterDto> ToDto(int id)
     {
-        var p = await _db.Printers.AsNoTracking()
-            .Include(x => x.Tur)
-            .Include(x => x.Tedarikci)
-            .FirstAsync(x => x.Id == id);
-
-        var count = await _db.PrintReadings.AsNoTracking().CountAsync(r => r.PrinterId == id);
-        var last = await _db.PrintReadings.AsNoTracking()
-            .Where(r => r.PrinterId == id)
-            .OrderByDescending(r => r.TimestampUtc)
-            .Select(r => new { r.TimestampUtc, r.PageCount })
-            .FirstOrDefaultAsync();
+        var ct = HttpContext.RequestAborted;
+        var p = (await _printers.GetByIdAsync(id, ct))!;
+        var count = await _readings.CountByPrinterAsync(id, ct);
+        var last = await _readings.GetLatestAsync(id, ct);
 
         return new PrinterDto(
             p.Id, p.Name, p.IpAddress, p.Model,

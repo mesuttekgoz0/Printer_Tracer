@@ -1,0 +1,5 @@
+CREATE PROCEDURE dbo.Printer_ExistsByIp @IpAddress NVARCHAR(45)
+AS
+BEGIN
+    SELECT CAST(CASE WHEN EXISTS (SELECT 1 FROM dbo.Printers WHERE IpAddress = @IpAddress) THEN 1 ELSE 0 END AS BIT) AS Found;
+END

@@ -17,10 +17,11 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
             .AddJsonFile("appsettings.Development.json", optional: true)
             .Build();
 
-        var connectionString = configuration.GetConnectionString("AppDb") ?? "Data Source=yazicitakip.db";
+        var connectionString = configuration.GetConnectionString("AppDb")
+            ?? "Server=localhost;Database=YaziciTakip;Trusted_Connection=True;TrustServerCertificate=True";
 
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite(connectionString)
+            .UseSqlServer(connectionString)
             .Options;
 
         return new AppDbContext(options);

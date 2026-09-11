@@ -1,28 +1,29 @@
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 using YaziciTakip.Models;
 
 namespace YaziciTakip.Services;
 
 /// <summary>
 /// Kayıtlı tüm yazıcıların (veya verilen alt kümenin) SNMP sayfa sayacını tek seferde
-/// okuyup SQLite'a kaydeder. Arayüzdeki "Sayaç Oku" (POST /api/readings/read) tetikler.
+/// okuyup kaydeder. Arayüzdeki "Sayaç Oku" (POST /api/readings/read) tetikler.
 /// </summary>
 public class PrinterReadingService
 {
-    private readonly AppDbContext _db;
+    private readonly IPrinterRepository _printers;
+    private readonly IPrintReadingRepository _readings;
     private readonly ISnmpService _snmp;
 
-    public PrinterReadingService(AppDbContext db, ISnmpService snmp)
+    public PrinterReadingService(IPrinterRepository printers, IPrintReadingRepository readings, ISnmpService snmp)
     {
-        _db = db;
+        _printers = printers;
+        _readings = readings;
         _snmp = snmp;
     }
 
     /// <summary>
-    /// Yazıcıları paralel okur, ulaşılabilenler için yeni bir <see cref="PrintReading"/> ekler
-    /// ve yazıcı başına önceki sayaç / yeni sayaç / fark bilgisini döndürür.
-    /// <paramref name="printerIds"/> verilirse yalnızca o yazıcılar okunur; boş/null ise hepsi.
+    /// Yazıcıları paralel okur, ulaşılabilenler için yeni bir okuma ekler ve yazıcı başına
+    /// önceki sayaç / yeni sayaç / fark bilgisini döndürür. <paramref name="printerIds"/>
+    /// verilirse yalnızca o yazıcılar okunur; boş/null ise hepsi.
     /// </summary>
     public async Task<ManualReadResult> ReadAllAsync(
         IReadOnlyCollection<int>? printerIds = null,
@@ -30,12 +31,10 @@ public class PrinterReadingService
     {
         var result = new ManualReadResult();
 
-        // Tracked: aşağıda gerekirse Printer.Model güncellenip aynı SaveChanges ile yazılacak.
-        var query = _db.Printers.OrderBy(p => p.Name).AsQueryable();
-        if (printerIds is { Count: > 0 })
-            query = query.Where(p => printerIds.Contains(p.Id));
-
-        var printers = await query.ToListAsync(cancellationToken);
+        var all = await _printers.GetAllAsync(cancellationToken);
+        var printers = (printerIds is { Count: > 0 } ? all.Where(p => printerIds.Contains(p.Id)) : all)
+            .OrderBy(p => p.Name)
+            .ToList();
 
         if (printers.Count == 0)
             return result;
@@ -44,12 +43,7 @@ public class PrinterReadingService
         var previous = new Dictionary<int, (long Count, DateTime Utc)>();
         foreach (var p in printers)
         {
-            var last = await _db.PrintReadings.AsNoTracking()
-                .Where(r => r.PrinterId == p.Id)
-                .OrderByDescending(r => r.TimestampUtc)
-                .Select(r => new { r.PageCount, r.TimestampUtc })
-                .FirstOrDefaultAsync(cancellationToken);
-
+            var last = await _readings.GetLatestAsync(p.Id, cancellationToken);
             if (last is not null)
                 previous[p.Id] = (last.PageCount, last.TimestampUtc);
         }
@@ -70,8 +64,7 @@ public class PrinterReadingService
         foreach (var (printer, count, model) in reads)
         {
             if (!string.IsNullOrWhiteSpace(model) && !string.Equals(printer.Model, model, StringComparison.Ordinal))
-                printer.Model = model;   // tracked → aşağıdaki SaveChanges ile kalıcı
-
+                await _printers.UpdateModelAsync(printer.Id, model, cancellationToken);
 
             var row = new ManualReadRow
             {
@@ -94,20 +87,11 @@ public class PrinterReadingService
             {
                 row.Reachable = true;
                 row.NewCounter = count.Value;
-                _db.PrintReadings.Add(new PrintReading
-                {
-                    PrinterId = printer.Id,
-                    PageCount = count.Value,
-                    TimestampUtc = timestamp,
-                });
+                await _readings.InsertAsync(printer.Id, count.Value, timestamp, cancellationToken);
             }
 
             result.Rows.Add(row);
         }
-
-        // Yeni okumalar ve/veya güncellenen Printer.Model.
-        if (_db.ChangeTracker.HasChanges())
-            await _db.SaveChangesAsync(cancellationToken);
 
         return result;
     }

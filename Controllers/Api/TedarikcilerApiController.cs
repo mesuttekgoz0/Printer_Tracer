@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 using YaziciTakip.Models;
 
 namespace YaziciTakip.Controllers.Api;
@@ -8,56 +7,58 @@ namespace YaziciTakip.Controllers.Api;
 /// <summary>
 /// Tedarikçiler + fiyatlandırma JSON API'si.
 /// Fiyat modeli: <see cref="Fiyat"/> (master: tedarikçi + tür) → <see cref="FiyatDetay"/>
-/// (tarih aralığı + sayfa-başı fiyat).
+/// (tarih aralığı + sayfa-başı fiyat). Veri erişimi saklı yordamlarla (<see cref="ITedarikciRepository"/>,
+/// <see cref="IFiyatRepository"/>) yapılır.
 /// </summary>
 [ApiController]
 [Route("api/tedarikciler")]
 [Produces("application/json")]
 public class TedarikcilerApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly ITedarikciRepository _tedarikciler;
+    private readonly IPrinterRepository _printers;
+    private readonly ITurRepository _turler;
+    private readonly IFiyatRepository _fiyatlar;
 
-    public TedarikcilerApiController(AppDbContext db)
+    public TedarikcilerApiController(
+        ITedarikciRepository tedarikciler, IPrinterRepository printers,
+        ITurRepository turler, IFiyatRepository fiyatlar)
     {
-        _db = db;
+        _tedarikciler = tedarikciler;
+        _printers = printers;
+        _turler = turler;
+        _fiyatlar = fiyatlar;
     }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TedarikciListDto>>> GetAll()
     {
-        return await _db.Tedarikciler.AsNoTracking()
-            .OrderBy(t => t.Ad)
-            .Select(t => new TedarikciListDto(
-                t.Id, t.Ad, t.Not,
-                t.Printers.Count,
-                t.Fiyatlar.Count,
-                t.Fiyatlar.SelectMany(f => f.Detaylar).Count()))
-            .ToListAsync();
+        var rows = await _tedarikciler.GetAllAsync(HttpContext.RequestAborted);
+        return rows.Select(r => new TedarikciListDto(r.Id, r.Ad, r.Not, r.PrinterCount, r.FiyatSayisi, r.DetaySayisi)).ToList();
     }
 
     [HttpGet("{id:int}")]
     public async Task<ActionResult<TedarikciDetailDto>> Get(int id)
     {
-        var t = await _db.Tedarikciler.AsNoTracking()
-            .Include(x => x.Printers.OrderBy(p => p.Name)).ThenInclude(p => p.Tur)
-            .Include(x => x.Fiyatlar).ThenInclude(f => f.Tur)
-            .Include(x => x.Fiyatlar).ThenInclude(f => f.Detaylar)
-            .FirstOrDefaultAsync(x => x.Id == id);
+        var ct = HttpContext.RequestAborted;
+        var t = await _tedarikciler.GetByIdAsync(id, ct);
         if (t is null) return NotFound();
 
-        var turler = await _db.Turler.AsNoTracking().OrderBy(x => x.Id)
-            .Select(x => new OptionDto(x.Id, x.Ad)).ToListAsync();
+        var printers = await _printers.ListByTedarikciAsync(id, ct);
+        var fiyatlar = await _fiyatlar.ListByTedarikciAsync(id, ct);
+        var detaylar = await _fiyatlar.ListDetaylarByTedarikciAsync(id, ct);
+        var turler = (await _turler.GetAllAsync(ct)).Select(x => new OptionDto(x.Id, x.Ad)).ToList();
 
         var today = DateOnly.FromDateTime(DateTime.Now);
 
         return new TedarikciDetailDto(
             t.Id, t.Ad, t.Not,
-            t.Printers.Select(p => new TedarikciPrinterDto(p.Id, p.Name, p.IpAddress, p.TurAdi)).ToList(),
-            t.Fiyatlar
+            printers.Select(p => new TedarikciPrinterDto(p.Id, p.Name, p.IpAddress, p.TurAdi)).ToList(),
+            fiyatlar
                 .OrderBy(f => f.TurId)
                 .Select(f => new FiyatDto(
                     f.Id, f.TurId, f.Tur?.Ad ?? Tur.Belirtilmemis,
-                    f.Detaylar
+                    detaylar.Where(d => d.FiyatId == f.Id)
                         .OrderByDescending(d => d.BaslangicTarihi).ThenByDescending(d => d.Id)
                         .Select(d => new FiyatDetayDto(
                             d.Id, d.BaslangicTarihi, d.BitisTarihi, d.SayfaBasiFiyat, d.Kapsar(today)))
@@ -73,11 +74,8 @@ public class TedarikcilerApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(ad))
             return Problem("Tedarikçi adı boş olamaz.", statusCode: 400);
 
-        var t = new Tedarikci { Ad = ad, Not = Clean(req.Not) };
-        _db.Tedarikciler.Add(t);
-        await _db.SaveChangesAsync();
-        return CreatedAtAction(nameof(Get), new { id = t.Id },
-            new TedarikciListDto(t.Id, t.Ad, t.Not, 0, 0, 0));
+        var id = await _tedarikciler.InsertAsync(ad, Clean(req.Not), HttpContext.RequestAborted);
+        return CreatedAtAction(nameof(Get), new { id }, new TedarikciListDto(id, ad, Clean(req.Not), 0, 0, 0));
     }
 
     [HttpPut("{id:int}")]
@@ -87,21 +85,16 @@ public class TedarikcilerApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(ad))
             return Problem("Tedarikçi adı boş olamaz.", statusCode: 400);
 
-        var t = await _db.Tedarikciler.FindAsync(id);
-        if (t is null) return NotFound();
-        t.Ad = ad;
-        t.Not = Clean(req.Not);
-        await _db.SaveChangesAsync();
+        if (!await _tedarikciler.UpdateAsync(id, ad, Clean(req.Not), HttpContext.RequestAborted))
+            return NotFound();
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var t = await _db.Tedarikciler.FindAsync(id);
-        if (t is null) return NotFound();
-        _db.Tedarikciler.Remove(t);
-        await _db.SaveChangesAsync();
+        if (!await _tedarikciler.DeleteAsync(id, HttpContext.RequestAborted))
+            return NotFound();
         return NoContent();
     }
 
@@ -112,33 +105,20 @@ public class TedarikcilerApiController : ControllerBase
     [HttpPost("{id:int}/fiyatlar")]
     public async Task<IActionResult> AddFiyat(int id, [FromBody] AddFiyatRequest req)
     {
-        var t = await _db.Tedarikciler.FindAsync(id);
-        if (t is null) return NotFound();
+        var ct = HttpContext.RequestAborted;
+        if (await _tedarikciler.GetByIdAsync(id, ct) is null) return NotFound();
 
-        if (!await _db.Turler.AnyAsync(x => x.Id == req.TurId))
+        if (await _turler.GetByIdAsync(req.TurId, ct) is null)
             return Problem("Geçerli bir tür seçin.", statusCode: 400);
         if (req.BaslangicTarihi is not { } bas || req.BitisTarihi is not { } bit)
             return Problem("Başlangıç ve bitiş tarihi gerekli.", statusCode: 400);
         if (bas > bit)
             return Problem("Başlangıç tarihi bitiş tarihinden sonra olamaz.", statusCode: 400);
 
-        var master = await _db.Fiyatlar
-            .FirstOrDefaultAsync(f => f.TedarikciId == id && f.TurId == req.TurId);
-        if (master is null)
-        {
-            master = new Fiyat { TedarikciId = id, TurId = req.TurId };
-            _db.Fiyatlar.Add(master);
-        }
+        var masterId = await _fiyatlar.FindMasterAsync(id, req.TurId, ct)
+                       ?? await _fiyatlar.InsertMasterAsync(id, req.TurId, ct);
 
-        master.Detaylar.Add(new FiyatDetay
-        {
-            TurId = req.TurId,
-            BaslangicTarihi = bas,
-            BitisTarihi = bit,
-            SayfaBasiFiyat = Math.Max(0m, req.SayfaBasiFiyat),
-        });
-
-        await _db.SaveChangesAsync();
+        await _fiyatlar.InsertDetayAsync(masterId, req.TurId, bas, bit, Math.Max(0m, req.SayfaBasiFiyat), ct);
         return NoContent();
     }
 
@@ -151,51 +131,40 @@ public class TedarikcilerApiController : ControllerBase
 [Produces("application/json")]
 public class FiyatDetaylariApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IFiyatRepository _fiyatlar;
 
-    public FiyatDetaylariApiController(AppDbContext db)
+    public FiyatDetaylariApiController(IFiyatRepository fiyatlar)
     {
-        _db = db;
+        _fiyatlar = fiyatlar;
     }
 
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] FiyatDetayRequest req)
     {
-        var d = await _db.FiyatDetaylari.FindAsync(id);
-        if (d is null) return NotFound();
+        var ct = HttpContext.RequestAborted;
+        if (await _fiyatlar.GetDetayByIdAsync(id, ct) is null) return NotFound();
 
         if (req.BaslangicTarihi is not { } bas || req.BitisTarihi is not { } bit)
             return Problem("Başlangıç ve bitiş tarihi gerekli.", statusCode: 400);
         if (bas > bit)
             return Problem("Başlangıç tarihi bitiş tarihinden sonra olamaz.", statusCode: 400);
 
-        d.BaslangicTarihi = bas;
-        d.BitisTarihi = bit;
-        d.SayfaBasiFiyat = Math.Max(0m, req.SayfaBasiFiyat);
-        await _db.SaveChangesAsync();
+        await _fiyatlar.UpdateDetayAsync(id, bas, bit, Math.Max(0m, req.SayfaBasiFiyat), ct);
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var d = await _db.FiyatDetaylari.FindAsync(id);
+        var ct = HttpContext.RequestAborted;
+        var d = await _fiyatlar.GetDetayByIdAsync(id, ct);
         if (d is null) return NotFound();
 
-        _db.FiyatDetaylari.Remove(d);
-        await _db.SaveChangesAsync();
+        await _fiyatlar.DeleteDetayAsync(id, ct);
 
         // Master'ın başka detayı kalmadıysa master'ı da sil.
-        var kalan = await _db.FiyatDetaylari.CountAsync(x => x.FiyatId == d.FiyatId);
-        if (kalan == 0)
-        {
-            var master = await _db.Fiyatlar.FindAsync(d.FiyatId);
-            if (master is not null)
-            {
-                _db.Fiyatlar.Remove(master);
-                await _db.SaveChangesAsync();
-            }
-        }
+        if (await _fiyatlar.CountDetaylarByFiyatIdAsync(d.FiyatId, ct) == 0)
+            await _fiyatlar.DeleteMasterAsync(d.FiyatId, ct);
 
         return NoContent();
     }

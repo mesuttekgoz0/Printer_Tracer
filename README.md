@@ -1,14 +1,14 @@
 # Printer_Tracer (Yazıcı Takip Sistemi)
 
 Ağa **doğrudan bağlı** (print server olmadan) yazıcıların sayfa sayacını SNMP ile
-okuyup SQLite'a kaydeden, bu veriyi rapor ve sayfa-başı hakediş belgesi olarak
-sunan bir uygulama.
+okuyup Microsoft SQL Server'a kaydeden, bu veriyi rapor ve sayfa-başı hakediş
+belgesi olarak sunan bir uygulama.
 
 İki parçadan oluşur:
 
 | Parça | Ne | Klasör | Port |
 |-------|-----|--------|------|
-| **Backend** | ASP.NET Core JSON API + SNMP + SQLite | proje kökü | `5239` |
+| **Backend** | ASP.NET Core JSON API + SNMP + MSSQL (saklı yordamlar) | proje kökü | `5239` |
 | **Frontend** | Next.js (App Router, TypeScript) | `web/` | `3000` |
 
 Frontend, backend'in `/api/**` uçlarını çağırır (CORS ile). Backend hiçbir HTML
@@ -50,20 +50,40 @@ sayfa sayısını verir.
 |------|------------|
 | Backend | .NET 9, ASP.NET Core Web API |
 | SNMP | [`Lextm.SharpSnmpLib`](https://www.nuget.org/packages/Lextm.SharpSnmpLib) 12.5.7 |
-| Veritabanı | SQLite + Entity Framework Core 9 |
+| Veritabanı | Microsoft SQL Server — şema EF Core 9 migration'larıyla, **tüm CRUD/listeleme saklı yordamlarla (stored procedure)** |
 | API dokümantasyonu | Swagger / OpenAPI (`/swagger`, yalnız Development) |
 | Frontend | Next.js 16 (App Router), TypeScript, düz CSS |
+
+### Veri erişim mimarisi
+
+EF Core burada **yalnızca şema** (migration'lar) ve DbContext'in bağlantısı için
+kullanılır — LINQ ile sorgu/kayıt yapılmaz. `Data/Repositories/` altındaki
+sınıflar `AppDbContext.Database.GetDbConnection()`'dan aldıkları bağlantı
+üzerinden doğrudan `SqlCommand` + `CommandType.StoredProcedure` ile 46 saklı
+yordamı çağırır. Controller'lar repository arayüzlerine bağımlıdır, `AppDbContext`'i
+hiç görmez.
+
+Prosedürlerin SQL kaynağı **`Data/StoredProcedures/*.sql`** — her prosedür kendi
+düz T-SQL dosyasında (SSMS/Azure Data Studio'da doğrudan açılıp okunur/düzenlenir,
+EF'e özgü hiçbir şey yok). `AddStoredProcedures` migration'ı bu dosyaları derlenmiş
+assembly'den (embedded resource) okuyup `dotnet ef database update` sırasında
+veritabanına yükler — yani tek kaynak `.sql` dosyaları, migration sadece taşıyıcı.
 
 ## Proje Yapısı
 
 ```
 YaziciTakip/
 ├── Program.cs                  # DI, CORS, Swagger, açılışta EF migration
-├── appsettings.json            # SNMP ayarları, CORS origin'leri, Hakediş firma bilgisi
+├── appsettings.json            # Bağlantı dizesi, SNMP ayarları, CORS origin'leri
 ├── Configuration/              # SnmpOptions, HakedisOptions
 ├── Models/                     # Entity'ler: Printer, PrintReading, Tur, Tedarikci,
 │                               #   Fiyat/FiyatDetay, Hakedis (+ ManualReadResult, SnmpDiagnosticResult)
-├── Data/                       # AppDbContext, design-time factory, Migrations
+├── Data/
+│   ├── AppDbContext.cs         # yalnızca şema/migration — LINQ sorgusu yok
+│   ├── AppDbContextFactory.cs  # design-time factory (dotnet ef ...)
+│   ├── StoredProcedures/       # her saklı yordamın kaynağı — düz .sql, 46 dosya
+│   ├── Migrations/             # InitialCreate (tablolar) + AddStoredProcedures (.sql'leri yükler)
+│   └── Repositories/           # ADO.NET + saklı yordam çağıran veri erişim katmanı
 ├── Services/                   # SnmpService, PrinterReadingService, PrinterDiscoveryService
 ├── Controllers/Api/            # PrintersApi, ReadingsApi, ReportApi, TedarikcilerApi,
 │                               #   HakedislerApi, DiagnosticsApi, DiscoveryApi, LookupsApi
@@ -76,13 +96,19 @@ YaziciTakip/
 
 ## Çalıştırma
 
-Gereksinim: [.NET 9 SDK](https://dotnet.microsoft.com/download) + [Node.js 20+](https://nodejs.org).
+Gereksinim: [.NET 9 SDK](https://dotnet.microsoft.com/download) + [Node.js 20+](https://nodejs.org)
++ **SQL Server**. Geliştirmede iki seçenek var:
+- Kurulu bir SQL Server'ın (Developer/Express, varsayılan instance) `localhost`'ta
+  Windows Authentication ile erişilebilir olması — bu makinede kullanılan yol.
+- Ya da hiç kurulum yapmadan **LocalDB** (Visual Studio ile gelir; `sqllocaldb info`
+  ile kontrol edilir, bağlantı dizesini `(localdb)\MSSQLLocalDB` yapmak yeterli).
 
 ```bash
 git clone https://github.com/mesuttekgoz0/Printer_Tracer.git
 cd Printer_Tracer
 
-# 1. Backend (terminal 1)
+# 1. Backend (terminal 1) — ilk seferinde şema + saklı yordamları oluşturur
+dotnet ef database update
 dotnet run
 #   -> http://localhost:5239 , Swagger: http://localhost:5239/swagger
 
@@ -93,8 +119,10 @@ npm run dev
 #   -> http://localhost:3000
 ```
 
-`dotnet run` açılışta DB migration'larını uygular (`yazicitakip.db` çalışma
-dizininde oluşur); **sayaç okuması yapmaz**.
+`dotnet run` açılışta yalnızca **bekleyen EF migration'larını** uygular (tablo/SP
+yoksa oluşturur); **sayaç okuması yapmaz**. İlk kurulumda `dotnet ef database
+update`'i elle çalıştırmak (migration kilidi / build sırası netliği için) önerilir,
+ama `dotnet run` da aynısını açılışta zaten yapar.
 
 Frontend'in backend adresi `web/.env.local` içindeki `NEXT_PUBLIC_API_BASE`
 (varsayılan `http://localhost:5239`). Backend'in kabul ettiği frontend origin'i
@@ -103,6 +131,13 @@ Frontend'in backend adresi `web/.env.local` içindeki `NEXT_PUBLIC_API_BASE`
 ## Yapılandırma (`appsettings.json`)
 
 ```jsonc
+"ConnectionStrings": {
+  // localhost'taki SQL Server'a Windows Authentication ile bağlanır (varsayılan instance).
+  // Firmanın gerçek/uzak SQL Server'ına geçerken bu satırı appsettings.Production.json /
+  // appsettings.*.Local.json'da (git dışı) override edin. LocalDB'ye dönmek için
+  // "Server=(localdb)\\MSSQLLocalDB;..." yeterli.
+  "AppDb": "Server=localhost;Database=YaziciTakip;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true"
+},
 "Cors": { "Origins": [ "http://localhost:3000" ] },   // frontend origin(ler)i
 "Hakedis": { "FromCompany": "", "ToCompany": "" },     // belgede gösterilen firma bilgisi (boş = gizli)
 "Snmp": {
@@ -129,8 +164,9 @@ sayfasını (ya da `GET /api/diagnostics?ip=<ip>`) kullan.
 - Sayfa sayacı yazıcının **dahili ömür boyu kümülatif sayacıdır**; izlemeye
   başlamadan önce basılanları da içerir. Sayaç manuel sıfırlanmışsa, gösterilen
   değer o sıfırlamadan sonraki toplamdır.
-- `yazicitakip.db` ve tüm `*.db*` dosyaları, `web/node_modules` ve `web/.next`
-  `.gitignore` içindedir.
-- Şirket içi/gerçek IP'ler `appsettings.Local.json` / `appsettings.*.Local.json`
-  / `appsettings.Production.json` dosyalarında tutulabilir (git dışı).
+- `yazicitakip.db*` (eski SQLite dönemi dosyaları, artık kullanılmıyor — arşiv),
+  `web/node_modules` ve `web/.next` `.gitignore` içindedir.
+- Şirket içi/gerçek IP'ler ve gerçek SQL Server bağlantı dizesi
+  `appsettings.Local.json` / `appsettings.*.Local.json` / `appsettings.Production.json`
+  dosyalarında tutulabilir (git dışı).
 - Giriş / kimlik doğrulama yoktur — iç ağ aracıdır.

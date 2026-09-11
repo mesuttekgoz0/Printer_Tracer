@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using YaziciTakip.Data;
+using YaziciTakip.Data.Repositories;
 using YaziciTakip.Services;
 
 namespace YaziciTakip.Controllers.Api;
@@ -11,12 +10,14 @@ namespace YaziciTakip.Controllers.Api;
 [Produces("application/json")]
 public class ReadingsApiController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IPrinterRepository _printers;
+    private readonly IPrintReadingRepository _readings;
     private readonly PrinterReadingService _reader;
 
-    public ReadingsApiController(AppDbContext db, PrinterReadingService reader)
+    public ReadingsApiController(IPrinterRepository printers, IPrintReadingRepository readings, PrinterReadingService reader)
     {
-        _db = db;
+        _printers = printers;
+        _readings = readings;
         _reader = reader;
     }
 
@@ -24,10 +25,8 @@ public class ReadingsApiController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ReadingsOverviewDto>> Get()
     {
-        var printers = await _db.Printers.AsNoTracking()
-            .Include(p => p.Tur)
-            .OrderBy(p => p.Name)
-            .ToListAsync();
+        var ct = HttpContext.RequestAborted;
+        var printers = await _printers.GetAllAsync(ct);
 
         var rows = new List<ReadingStatusDto>();
         DateTime? lastAll = null;
@@ -35,14 +34,8 @@ public class ReadingsApiController : ControllerBase
 
         foreach (var p in printers)
         {
-            var last2 = await _db.PrintReadings.AsNoTracking()
-                .Where(r => r.PrinterId == p.Id)
-                .OrderByDescending(r => r.TimestampUtc)
-                .Take(2)
-                .Select(r => new { r.PageCount, r.TimestampUtc })
-                .ToListAsync();
-
-            var count = await _db.PrintReadings.AsNoTracking().CountAsync(r => r.PrinterId == p.Id);
+            var last2 = await _readings.GetLast2Async(p.Id, ct);
+            var count = await _readings.CountByPrinterAsync(p.Id, ct);
 
             long? latest = last2.Count > 0 ? last2[0].PageCount : null;
             DateTime? latestUtc = last2.Count > 0 ? last2[0].TimestampUtc : null;

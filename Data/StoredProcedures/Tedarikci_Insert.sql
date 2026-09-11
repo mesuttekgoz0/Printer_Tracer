@@ -1,0 +1,6 @@
+CREATE PROCEDURE dbo.Tedarikci_Insert @Ad NVARCHAR(150), @Not NVARCHAR(500) = NULL
+AS
+BEGIN
+    INSERT INTO dbo.Tedarikciler (Ad, [Not]) VALUES (@Ad, @Not);
+    SELECT CAST(SCOPE_IDENTITY() AS INT) AS Id;
+END

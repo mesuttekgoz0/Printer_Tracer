@@ -9,12 +9,18 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Saklı yordamların SQL kaynağı: Data/StoredProcedures/*.sql (düz T-SQL, DBA/SSMS'te okunur/düzenlenir).
+         AddStoredProcedures migration'ı bunları derlenmiş assembly'den okuyup çalıştırır. -->
+    <EmbeddedResource Include="Data\StoredProcedures\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Lextm.SharpSnmpLib" Version="12.5.7" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.4" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.4" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
   </ItemGroup>
 
